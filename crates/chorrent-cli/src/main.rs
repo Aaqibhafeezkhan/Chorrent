@@ -1,5 +1,8 @@
-use anyhow::{bail, Context, Result};
-use chorrent::{Client, DownloadHandle, Error, Event, SavedTransfer, SeedHandle, SeedOptions, ShareCode, Transfer};
+use anyhow::{Context, Result, bail};
+use chorrent::{
+    Client, DownloadHandle, Error, Event, SavedTransfer, SeedHandle, SeedOptions, ShareCode,
+    Transfer,
+};
 use clap::{Args, Parser, Subcommand};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
@@ -7,7 +10,11 @@ use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 
 #[derive(Parser)]
-#[command(name = "chorrent", version, about = "Peer-to-peer file and folder sharing")]
+#[command(
+    name = "chorrent",
+    version,
+    about = "Peer-to-peer file and folder sharing"
+)]
 struct Cli {
     #[command(flatten)]
     opts: GlobalOpts,
@@ -115,7 +122,11 @@ async fn make_client(opts: &GlobalOpts, reseed: bool, needs_state: bool) -> Resu
         .upload_limit(opts.upload_limit)
         .download_limit(opts.download_limit)
         .mainline_dht(opts.dht);
-    let data_dir = if opts.no_state { None } else { opts.data_dir.clone().or_else(default_data_dir) };
+    let data_dir = if opts.no_state {
+        None
+    } else {
+        opts.data_dir.clone().or_else(default_data_dir)
+    };
     let Some(dir) = data_dir else {
         if needs_state {
             bail!("this command needs saved state; drop --no-state");
@@ -125,7 +136,10 @@ async fn make_client(opts: &GlobalOpts, reseed: bool, needs_state: bool) -> Resu
     match builder.clone().data_dir(&dir).build().await {
         Ok(client) => Ok(client),
         Err(Error::DataDirInUse(_)) if needs_state => {
-            bail!("another chorrent is using {}; stop it first, or pass a different --data-dir", dir.display())
+            bail!(
+                "another chorrent is using {}; stop it first, or pass a different --data-dir",
+                dir.display()
+            )
         }
         Err(Error::DataDirInUse(_)) => {
             eprintln!(
@@ -142,8 +156,16 @@ async fn make_client(opts: &GlobalOpts, reseed: bool, needs_state: bool) -> Resu
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Seed { path, private, join } => run_seed(&cli.opts, path, private, join).await,
-        Command::Get { args, seed, no_reseed } => run_get(&cli.opts, args, seed, !no_reseed).await,
+        Command::Seed {
+            path,
+            private,
+            join,
+        } => run_seed(&cli.opts, path, private, join).await,
+        Command::Get {
+            args,
+            seed,
+            no_reseed,
+        } => run_get(&cli.opts, args, seed, !no_reseed).await,
         Command::Doctor { codes } => run_doctor(&cli.opts, codes).await,
         Command::List => run_list(&cli.opts).await,
         Command::Resume => run_resume(&cli.opts).await,
@@ -217,7 +239,12 @@ fn print_seed_info(seed: &SeedHandle) {
     println!("\nShare this code:\n{code}\n");
 }
 
-async fn run_seed(opts: &GlobalOpts, path: PathBuf, private: bool, join: Option<String>) -> Result<()> {
+async fn run_seed(
+    opts: &GlobalOpts,
+    path: PathBuf,
+    private: bool,
+    join: Option<String>,
+) -> Result<()> {
     let mut options = SeedOptions::default().private(private);
     if let Some(code) = join {
         options = options.join(code.parse().context("the --join share code isn't valid")?);
@@ -265,7 +292,11 @@ async fn run_seed(opts: &GlobalOpts, path: PathBuf, private: bool, join: Option<
     Ok(())
 }
 
-async fn watch_seed(mut events: tokio::sync::broadcast::Receiver<Event>, spinner: ProgressBar, prefix: String) {
+async fn watch_seed(
+    mut events: tokio::sync::broadcast::Receiver<Event>,
+    spinner: ProgressBar,
+    prefix: String,
+) {
     spinner.set_style(spinner_style());
     spinner.set_prefix(prefix);
     spinner.enable_steady_tick(Duration::from_millis(200));
@@ -288,7 +319,10 @@ async fn watch_seed(mut events: tokio::sync::broadcast::Receiver<Event>, spinner
 }
 
 /// Show a download's progress on `pb` until it ends; returns its result.
-async fn drive_download(download: DownloadHandle, pb: ProgressBar) -> chorrent::Result<chorrent::Finished> {
+async fn drive_download(
+    download: DownloadHandle,
+    pb: ProgressBar,
+) -> chorrent::Result<chorrent::Finished> {
     pb.set_style(bar_style());
     pb.set_length(download.share_code().total_size());
     pb.set_message("finding peers...");
@@ -306,23 +340,52 @@ async fn drive_download(download: DownloadHandle, pb: ProgressBar) -> chorrent::
                     }
                     Ok(Event::Resumed { pieces, bytes }) => {
                         pb.inc(bytes);
-                        say(&pb, format!("Resuming: {pieces} pieces ({}) already on disk", HumanBytes(bytes)));
+                        say(
+                            &pb,
+                            format!(
+                                "Resuming: {pieces} pieces ({}) already on disk",
+                                HumanBytes(bytes)
+                            ),
+                        );
                     }
-                    Ok(Event::PeerConnected { peer, pieces, total }) => {
+                    Ok(Event::PeerConnected {
+                        peer,
+                        pieces,
+                        total,
+                    }) => {
                         peers += 1;
                         pb.set_message(format!("{peers} peer(s)"));
-                        say(&pb, format!("Peer {} connected ({pieces} of {total} pieces)", short(&peer)));
+                        say(
+                            &pb,
+                            format!(
+                                "Peer {} connected ({pieces} of {total} pieces)",
+                                short(&peer)
+                            ),
+                        );
                     }
-                    Ok(Event::PeerPath { peer, direct, rtt_ms }) => {
-                        let how = if direct { "direct connection" } else { "via relay (slower; hole punching didn't work yet)" };
-                        say(&pb, format!("Peer {}: {how}, {rtt_ms} ms round trip", short(&peer)));
+                    Ok(Event::PeerPath {
+                        peer,
+                        direct,
+                        rtt_ms,
+                    }) => {
+                        let how = if direct {
+                            "direct connection"
+                        } else {
+                            "via relay (slower; hole punching didn't work yet)"
+                        };
+                        say(
+                            &pb,
+                            format!("Peer {}: {how}, {rtt_ms} ms round trip", short(&peer)),
+                        );
                     }
                     Ok(Event::PeerDisconnected { peer }) => {
                         peers = peers.saturating_sub(1);
                         pb.set_message(format!("{peers} peer(s)"));
                         say(&pb, format!("Peer {} left", short(&peer)));
                     }
-                    Ok(Event::SwarmPeers { connected }) if connected > 0 => say(&pb, swarm_line(connected)),
+                    Ok(Event::SwarmPeers { connected }) if connected > 0 => {
+                        say(&pb, swarm_line(connected))
+                    }
                     Ok(Event::PieceVerified { bytes, .. }) => pb.inc(bytes),
                     Ok(Event::PieceFailed { index, reason }) => {
                         say(&pb, format!("Piece {index} failed, retrying: {reason}"));
@@ -344,11 +407,18 @@ async fn drive_download(download: DownloadHandle, pb: ProgressBar) -> chorrent::
 
 /// Share codes start with "chr2"; anything else is the destination folder.
 fn split_get_args(args: Vec<String>) -> Result<(ShareCode, Option<PathBuf>)> {
-    let (codes, rest): (Vec<String>, Vec<String>) = args.into_iter().partition(|a| a.trim().starts_with("chr"));
+    let (codes, rest): (Vec<String>, Vec<String>) =
+        args.into_iter().partition(|a| a.trim().starts_with("chr"));
     if rest.len() > 1 {
-        bail!("expected share codes and at most one destination folder, got {} other arguments", rest.len());
+        bail!(
+            "expected share codes and at most one destination folder, got {} other arguments",
+            rest.len()
+        );
     }
-    let mut codes = codes.iter().map(|c| c.parse::<ShareCode>().context("a share code you provided isn't valid"));
+    let mut codes = codes.iter().map(|c| {
+        c.parse::<ShareCode>()
+            .context("a share code you provided isn't valid")
+    });
     let mut code = codes.next().context("no share code given")??;
     for other in codes {
         code.merge(&other?)?;
@@ -356,14 +426,26 @@ fn split_get_args(args: Vec<String>) -> Result<(ShareCode, Option<PathBuf>)> {
     Ok((code, rest.into_iter().next().map(PathBuf::from)))
 }
 
-async fn run_get(opts: &GlobalOpts, args: Vec<String>, keep_seeding: bool, reseed: bool) -> Result<()> {
+async fn run_get(
+    opts: &GlobalOpts,
+    args: Vec<String>,
+    keep_seeding: bool,
+    reseed: bool,
+) -> Result<()> {
     let (code, dest_dir) = split_get_args(args)?;
     let client = make_client(opts, reseed, false).await?;
-    println!("Downloading {} ({})", code.name(), HumanBytes(code.total_size()));
+    println!(
+        "Downloading {} ({})",
+        code.name(),
+        HumanBytes(code.total_size())
+    );
     if code.peer_ids().len() > 1 {
         println!("Starting from {} known seeders", code.peer_ids().len());
     }
-    let download = client.download(&code, dest_dir).await.context("failed to start the download")?;
+    let download = client
+        .download(&code, dest_dir)
+        .await
+        .context("failed to start the download")?;
 
     let pb = ProgressBar::new(code.total_size());
     let driver = tokio::spawn(drive_download(download, pb.clone()));
@@ -408,9 +490,16 @@ async fn run_get(opts: &GlobalOpts, args: Vec<String>, keep_seeding: bool, resee
     }
 
     if keep_seeding && let Some(seed) = finished.seed {
-        println!("\nSeeding it too. Share this code:\n{}\n", seed.share_code());
+        println!(
+            "\nSeeding it too. Share this code:\n{}\n",
+            seed.share_code()
+        );
         println!("Press Ctrl+C to stop.");
-        let watcher = tokio::spawn(watch_seed(seed.events(), ProgressBar::new_spinner(), String::new()));
+        let watcher = tokio::spawn(watch_seed(
+            seed.events(),
+            ProgressBar::new_spinner(),
+            String::new(),
+        ));
         tokio::signal::ctrl_c().await?;
         watcher.abort();
     }
@@ -421,7 +510,10 @@ async fn run_get(opts: &GlobalOpts, args: Vec<String>, keep_seeding: bool, resee
 async fn run_doctor(opts: &GlobalOpts, codes: Vec<String>) -> Result<()> {
     let codes = codes
         .iter()
-        .map(|c| c.parse::<ShareCode>().context("a share code you provided isn't valid"))
+        .map(|c| {
+            c.parse::<ShareCode>()
+                .context("a share code you provided isn't valid")
+        })
         .collect::<Result<Vec<_>>>()?;
     // A throwaway identity: this checks the device and its network, and
     // shouldn't clash with a seed or download running alongside.
@@ -443,25 +535,41 @@ async fn run_doctor(opts: &GlobalOpts, codes: Vec<String>) -> Result<()> {
         Some(url) => println!("  [ok]   relay server: connected to {url}"),
         None => {
             println!("  [FAIL] relay server: couldn't connect within 15 s");
-            println!("         Devices on other networks probably can't reach this one. Check that a");
+            println!(
+                "         Devices on other networks probably can't reach this one. Check that a"
+            );
             println!("         firewall or VPN isn't blocking chorrent, or try another network.");
         }
     }
     if status.direct_addresses.is_empty() {
         println!("  [warn] no direct addresses found");
     } else {
-        println!("  [info] direct addresses: {}", status.direct_addresses.join(", "));
+        println!(
+            "  [info] direct addresses: {}",
+            status.direct_addresses.join(", ")
+        );
     }
 
     for code in &codes {
-        println!("\nShare \"{}\" ({} peer(s) listed)", code.name(), code.peer_ids().len());
+        println!(
+            "\nShare \"{}\" ({} peer(s) listed)",
+            code.name(),
+            code.peer_ids().len()
+        );
         for check in client.check_peers(code).await {
             let peer = short(&check.peer);
             if !check.reachable {
-                println!("  [FAIL] peer {peer}: unreachable ({})", check.problem.as_deref().unwrap_or("unknown"));
+                println!(
+                    "  [FAIL] peer {peer}: unreachable ({})",
+                    check.problem.as_deref().unwrap_or("unknown")
+                );
                 if !check.listed_relay {
-                    println!("         Its share code has no relay address: that device wasn't connected to a");
-                    println!("         relay when it made the code. Have it run `chorrent doctor` itself.");
+                    println!(
+                        "         Its share code has no relay address: that device wasn't connected to a"
+                    );
+                    println!(
+                        "         relay when it made the code. Have it run `chorrent doctor` itself."
+                    );
                 }
                 continue;
             }
@@ -473,7 +581,10 @@ async fn run_doctor(opts: &GlobalOpts, codes: Vec<String>) -> Result<()> {
             if check.serves_share {
                 println!("  [ok]   peer {peer}: reachable ({path}), serving this share");
             } else {
-                println!("  [warn] peer {peer}: reachable ({path}), {}", check.problem.as_deref().unwrap_or("not serving it"));
+                println!(
+                    "  [warn] peer {peer}: reachable ({path}), {}",
+                    check.problem.as_deref().unwrap_or("not serving it")
+                );
             }
         }
     }
@@ -494,7 +605,12 @@ async fn run_list(opts: &GlobalOpts) -> Result<()> {
                 println!("seed      {id}  {}{private}", path.display());
             }
             SavedTransfer::Download { code, dest_dir } => {
-                println!("download  {}  {} -> {}", code.id(), code.name(), dest_dir.display());
+                println!(
+                    "download  {}  {} -> {}",
+                    code.id(),
+                    code.name(),
+                    dest_dir.display()
+                );
             }
             _ => {}
         }
@@ -515,9 +631,20 @@ async fn run_resume(opts: &GlobalOpts) -> Result<()> {
     for item in &saved {
         match client.resume(item).await {
             Ok(Transfer::Seed(seed)) => {
-                say_multi(&multi, format!("Seeding {}\n  code: {}", seed.path().display(), seed.share_code()));
+                say_multi(
+                    &multi,
+                    format!(
+                        "Seeding {}\n  code: {}",
+                        seed.path().display(),
+                        seed.share_code()
+                    ),
+                );
                 let name = seed.share_code().name().to_string();
-                tasks.spawn(watch_seed(seed.events(), multi.add(ProgressBar::new_spinner()), name));
+                tasks.spawn(watch_seed(
+                    seed.events(),
+                    multi.add(ProgressBar::new_spinner()),
+                    name,
+                ));
                 seeds.push(seed);
             }
             Ok(Transfer::Download(download)) => {

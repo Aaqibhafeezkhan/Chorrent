@@ -42,7 +42,10 @@ pub(crate) struct Scheduler<K> {
 impl<K: Eq + Hash + Clone> Scheduler<K> {
     /// `have` is what's already on disk (all false for a fresh download).
     pub fn new(have: &[bool], urgent_window: usize) -> Self {
-        let pieces: Vec<_> = have.iter().map(|&h| if h { Piece::Done } else { Piece::Missing }).collect();
+        let pieces: Vec<_> = have
+            .iter()
+            .map(|&h| if h { Piece::Done } else { Piece::Missing })
+            .collect();
         let done = have.iter().filter(|&&h| h).count();
         let mut s = Self {
             availability: vec![0; pieces.len()],
@@ -83,7 +86,9 @@ impl<K: Eq + Hash + Clone> Scheduler<K> {
 
     /// Forget a peer; anything only it was fetching goes back to Missing.
     pub fn remove_peer(&mut self, peer: &K) {
-        let Some(bits) = self.peers.remove(peer) else { return };
+        let Some(bits) = self.peers.remove(peer) else {
+            return;
+        };
         for (i, h) in bits.into_iter().enumerate() {
             if h {
                 self.availability[i] -= 1;
@@ -129,7 +134,9 @@ impl<K: Eq + Hash + Clone> Scheduler<K> {
             choice = (self.first_not_done..total)
                 .filter(|&i| bits[i])
                 .filter_map(|i| match &self.pieces[i] {
-                    Piece::InFlight(by) if by.len() < ENDGAME_DUPLICATES && !by.contains(peer) => Some((i, by.len())),
+                    Piece::InFlight(by) if by.len() < ENDGAME_DUPLICATES && !by.contains(peer) => {
+                        Some((i, by.len()))
+                    }
                     _ => None,
                 })
                 .min_by_key(|&(_, n)| n)
@@ -190,7 +197,9 @@ impl<K: Eq + Hash + Clone> Scheduler<K> {
     }
 
     fn advance_playhead(&mut self) {
-        while self.first_not_done < self.pieces.len() && self.pieces[self.first_not_done] == Piece::Done {
+        while self.first_not_done < self.pieces.len()
+            && self.pieces[self.first_not_done] == Piece::Done
+        {
             self.first_not_done += 1;
         }
     }

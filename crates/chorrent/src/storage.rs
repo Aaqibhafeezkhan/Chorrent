@@ -73,7 +73,11 @@ impl std::fmt::Debug for MasterKey {
 #[derive(Debug, Clone)]
 pub(crate) enum FileData {
     Plain(PathBuf),
-    Encrypted { path: PathBuf, key: MasterKey, size: u64 },
+    Encrypted {
+        path: PathBuf,
+        key: MasterKey,
+        size: u64,
+    },
 }
 
 impl FileData {
@@ -90,10 +94,17 @@ impl FileData {
     /// An existing file: encrypted if it carries our header, else plain.
     pub fn detect(path: PathBuf, key: Option<&MasterKey>, size: u64) -> io::Result<Self> {
         let mut magic = [0u8; 8];
-        let is_ours = File::open(&path).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == MAGIC;
+        let is_ours = File::open(&path)
+            .and_then(|mut f| f.read_exact(&mut magic))
+            .is_ok()
+            && &magic == MAGIC;
         match (is_ours, key) {
             (false, _) => Ok(FileData::Plain(path)),
-            (true, Some(key)) => Ok(FileData::Encrypted { path, key: key.clone(), size }),
+            (true, Some(key)) => Ok(FileData::Encrypted {
+                path,
+                key: key.clone(),
+                size,
+            }),
             (true, None) => Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "this file is in the encrypted store, but no storage key was given",
@@ -108,7 +119,11 @@ impl FileData {
         }
         match self {
             FileData::Plain(path) => {
-                let file = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(path)?;
                 // Size is set by the caller for plain files (they know it).
                 drop(file);
                 Ok(())
@@ -120,7 +135,11 @@ impl FileData {
                 let mut header = Vec::with_capacity(HEADER as usize);
                 header.extend_from_slice(MAGIC);
                 header.extend_from_slice(&rand::random::<[u8; 16]>());
-                let file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(path)?;
                 (&file).write_all(&header)?;
                 file.set_len(HEADER + size.div_ceil(block()) * slot())
             }
@@ -152,10 +171,18 @@ impl FileData {
                 let mut header = [0u8; HEADER as usize];
                 file.read_exact_at(0, &mut header)?;
                 if &header[..8] != MAGIC {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "not an encrypted store file"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "not an encrypted store file",
+                    ));
                 }
                 let salt: [u8; 16] = header[8..].try_into().unwrap();
-                Ok(Handle::Encrypted(Encrypted { file, cipher: key.file_key(&salt), size: *size, strict }))
+                Ok(Handle::Encrypted(Encrypted {
+                    file,
+                    cipher: key.file_key(&salt),
+                    size: *size,
+                    strict,
+                }))
             }
         }
     }
@@ -164,7 +191,10 @@ impl FileData {
     /// Buffered in whole pieces: each small read would otherwise cost a disk
     /// read, and for encrypted files a whole piece's decryption.
     pub fn reader(&self) -> io::Result<io::BufReader<SequentialReader>> {
-        let inner = SequentialReader { handle: self.open_strict()?, pos: 0 };
+        let inner = SequentialReader {
+            handle: self.open_strict()?,
+            pos: 0,
+        };
         Ok(io::BufReader::with_capacity(16 * block() as usize, inner))
     }
 }
@@ -193,7 +223,10 @@ impl Encrypted {
         let len = self.block_len(index);
         let unreadable = |what: &str| {
             if self.strict {
-                Err(io::Error::new(io::ErrorKind::InvalidData, format!("encrypted piece {index} {what}")))
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("encrypted piece {index} {what}"),
+                ))
             } else {
                 Ok(vec![0; len])
             }
@@ -209,7 +242,13 @@ impl Encrypted {
         }
         let nonce = XNonce::try_from(nonce).expect("24 bytes");
         let aad = index.to_le_bytes();
-        match self.cipher.decrypt(&nonce, Payload { msg: ciphertext, aad: &aad }) {
+        match self.cipher.decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad: &aad,
+            },
+        ) {
             Ok(plain) => Ok(plain),
             Err(_) => unreadable("failed to decrypt (wrong key, or damaged)"),
         }
@@ -220,7 +259,13 @@ impl Encrypted {
         let aad = index.to_le_bytes();
         let ciphertext = self
             .cipher
-            .encrypt(&XNonce::from(nonce), Payload { msg: plain, aad: &aad })
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: plain,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| io::Error::other("encryption failed"))?;
         let mut sealed = Vec::with_capacity(NONCE + ciphertext.len());
         sealed.extend_from_slice(&nonce);
@@ -254,7 +299,10 @@ impl WriteAt for Handle {
             Handle::Plain(file) => file.write_at(pos, buf),
             Handle::Encrypted(enc) => {
                 if pos >= enc.size || buf.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "write past the end of the file"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "write past the end of the file",
+                    ));
                 }
                 let index = pos / block();
                 let within = (pos % block()) as usize;
@@ -307,7 +355,12 @@ pub(crate) struct ImportingReader<R> {
 impl<R: Read> ImportingReader<R> {
     pub fn new(source: R, dest: &FileData) -> io::Result<Self> {
         dest.preallocate()?;
-        Ok(Self { source, dest: dest.open(true)?, pending: Vec::new(), written: 0 })
+        Ok(Self {
+            source,
+            dest: dest.open(true)?,
+            pending: Vec::new(),
+            written: 0,
+        })
     }
 
     /// Write out the last partial piece. Call once the hasher has read everything.
@@ -343,7 +396,11 @@ mod tests {
     }
 
     fn encrypted(dir: &Path, size: u64) -> FileData {
-        FileData::Encrypted { path: dir.join("0.enc"), key: MasterKey::new([7; 32]), size }
+        FileData::Encrypted {
+            path: dir.join("0.enc"),
+            key: MasterKey::new([7; 32]),
+            size,
+        }
     }
 
     #[test]
@@ -364,7 +421,10 @@ mod tests {
         assert_eq!(back, data);
 
         let raw = std::fs::read(file.path()).unwrap();
-        assert!(!raw.windows(64).any(|w| data.windows(64).next() == Some(w)), "plaintext leaked");
+        assert!(
+            !raw.windows(64).any(|w| data.windows(64).next() == Some(w)),
+            "plaintext leaked"
+        );
     }
 
     #[test]
@@ -373,24 +433,49 @@ mod tests {
         let data = content(block() as usize * 2);
         let file = encrypted(dir.path(), data.len() as u64);
         file.preallocate().unwrap();
-        file.open(true).unwrap().write_all_at(0, &data[..block() as usize]).unwrap();
+        file.open(true)
+            .unwrap()
+            .write_all_at(0, &data[..block() as usize])
+            .unwrap();
 
         let mut buf = vec![1u8; 100];
         let h = file.open(false).unwrap();
         h.read_exact_at(block(), &mut buf).unwrap(); // never written
         assert!(buf.iter().all(|&b| b == 0));
 
-        let wrong = FileData::Encrypted { path: file.path().to_path_buf(), key: MasterKey::new([8; 32]), size: data.len() as u64 };
-        wrong.open(false).unwrap().read_exact_at(0, &mut buf).unwrap();
+        let wrong = FileData::Encrypted {
+            path: file.path().to_path_buf(),
+            key: MasterKey::new([8; 32]),
+            size: data.len() as u64,
+        };
+        wrong
+            .open(false)
+            .unwrap()
+            .read_exact_at(0, &mut buf)
+            .unwrap();
         assert!(buf.iter().all(|&b| b == 0));
         // Reading finished data must not pass zeros off as content.
-        assert!(wrong.open_strict().unwrap().read_exact_at(0, &mut buf).is_err());
-        assert!(file.open_strict().unwrap().read_exact_at(block(), &mut buf).is_err());
+        assert!(
+            wrong
+                .open_strict()
+                .unwrap()
+                .read_exact_at(0, &mut buf)
+                .is_err()
+        );
+        assert!(
+            file.open_strict()
+                .unwrap()
+                .read_exact_at(block(), &mut buf)
+                .is_err()
+        );
 
         let mut raw = std::fs::read(file.path()).unwrap();
         raw[HEADER as usize + NONCE + 10] ^= 1;
         std::fs::write(file.path(), &raw).unwrap();
-        file.open(false).unwrap().read_exact_at(0, &mut buf).unwrap();
+        file.open(false)
+            .unwrap()
+            .read_exact_at(0, &mut buf)
+            .unwrap();
         assert!(buf.iter().all(|&b| b == 0));
     }
 

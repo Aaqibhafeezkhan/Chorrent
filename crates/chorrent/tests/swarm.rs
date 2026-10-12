@@ -3,7 +3,7 @@
 //! Every node here has address lookup switched off, so a peer can only be
 //! reached through addresses it was actually given. Needs internet access.
 
-use chorrent::{Client, Endpoint, Event, SeedOptions, PIECE_SIZE};
+use chorrent::{Client, Endpoint, Event, PIECE_SIZE, SeedOptions};
 use iroh::endpoint::presets;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +45,10 @@ async fn node(download_limit: Option<u64>) -> Node {
             }
         }
     });
-    Node { client, _accept: accept }
+    Node {
+        client,
+        _accept: accept,
+    }
 }
 
 fn content(len: usize) -> Vec<u8> {
@@ -54,9 +57,16 @@ fn content(len: usize) -> Vec<u8> {
 
 /// Download `code` on `node` and return how many distinct peers it used.
 async fn peers_used(node: &Node, code: &chorrent::ShareCode, expected: &[u8]) -> usize {
-    let download = node.client.download(code, Some(tempfile::tempdir().unwrap().keep())).await.unwrap();
+    let download = node
+        .client
+        .download(code, Some(tempfile::tempdir().unwrap().keep()))
+        .await
+        .unwrap();
     let mut events = download.events();
-    let done = tokio::time::timeout(Duration::from_secs(150), download.finished()).await.unwrap().unwrap();
+    let done = tokio::time::timeout(Duration::from_secs(150), download.finished())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(std::fs::read(done.path.unwrap()).unwrap(), expected);
     let mut peers = std::collections::HashSet::new();
     while let Ok(event) = events.try_recv() {
@@ -77,14 +87,22 @@ async fn joining_seeder_is_found_without_id_lookup() {
     let a = node(None).await;
     let seed_a = a.client.seed(&file).await.unwrap();
     let b = node(None).await;
-    let _seed_b = b.client.seed_with(&file, SeedOptions::default().join(seed_a.share_code())).await.unwrap();
+    let _seed_b = b
+        .client
+        .seed_with(&file, SeedOptions::default().join(seed_a.share_code()))
+        .await
+        .unwrap();
     // Let B join A's swarm and announce itself.
     tokio::time::sleep(Duration::from_secs(8)).await;
 
     // C only has A's code, and must still find and use B: that only works
     // if B really joined A's swarm (it couldn't before the fix).
     let c = node(Some(512 * 1024)).await;
-    assert_eq!(peers_used(&c, &seed_a.share_code(), &data).await, 2, "C should use both seeders");
+    assert_eq!(
+        peers_used(&c, &seed_a.share_code(), &data).await,
+        2,
+        "C should use both seeders"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -97,8 +115,16 @@ async fn a_joined_seeders_code_reaches_every_seeder() {
     let a = node(None).await;
     let seed_a = a.client.seed(&file).await.unwrap();
     let b = node(None).await;
-    let seed_b = b.client.seed_with(&file, SeedOptions::default().join(seed_a.share_code())).await.unwrap();
-    assert_eq!(seed_b.share_code().peer_ids().len(), 2, "B's code lists B and A");
+    let seed_b = b
+        .client
+        .seed_with(&file, SeedOptions::default().join(seed_a.share_code()))
+        .await
+        .unwrap();
+    assert_eq!(
+        seed_b.share_code().peer_ids().len(),
+        2,
+        "B's code lists B and A"
+    );
 
     // C only has B's code: it should reach A directly from it, too.
     let c = node(Some(512 * 1024)).await;

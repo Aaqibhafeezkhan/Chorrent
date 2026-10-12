@@ -8,12 +8,12 @@ use crate::event::Event;
 use crate::handler::Registry;
 use crate::limits::RateLimiter;
 use crate::local::{LocalShare, SharedShare};
-use crate::manifest::{Manifest, MAX_MANIFEST_BYTES};
+use crate::manifest::{MAX_MANIFEST_BYTES, Manifest};
 use crate::node::ChorrentNode;
-use crate::protocol::{self, unpack_bits, Request, Response};
+use crate::protocol::{self, Request, Response, unpack_bits};
 use crate::registration::Registration;
 use crate::scheduler::Scheduler;
-use crate::share::{access_token, ShareCode};
+use crate::share::{ShareCode, access_token};
 use crate::storage::MasterKey;
 use crate::store::Store;
 use iroh::endpoint::Connection;
@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, watch, Notify};
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -138,10 +138,15 @@ pub(crate) async fn run(
         next += 1;
         // Short first tries, longer later ones (a relayed connection can be slow).
         let tries = attempts.entry(addr.id).or_insert(0);
-        let limit = (FIRST_ATTEMPT * 2u32.pow((*tries).min(4))).min(CONNECT_TIMEOUT).min(remaining);
+        let limit = (FIRST_ATTEMPT * 2u32.pow((*tries).min(4)))
+            .min(CONNECT_TIMEOUT)
+            .min(remaining);
         *tries += 1;
         let attempt = async {
-            let conn = tokio::time::timeout(limit, ctx.node.connect(addr)).await.ok()?.ok()?;
+            let conn = tokio::time::timeout(limit, ctx.node.connect(addr))
+                .await
+                .ok()?
+                .ok()?;
             match fetch_manifest(&conn, &code, auth).await {
                 Ok((manifest, bytes)) => Some((manifest, bytes, conn)),
                 Err(_) => {
@@ -154,7 +159,8 @@ pub(crate) async fn run(
             got = attempt => if let Some(found) = got { break found },
             _ = cancel.wait_for(|&c| c) => return Err(Error::Cancelled),
         }
-        let pause = Duration::from_millis(500).min(deadline.saturating_duration_since(Instant::now()));
+        let pause =
+            Duration::from_millis(500).min(deadline.saturating_duration_since(Instant::now()));
         tokio::select! {
             _ = tokio::time::sleep(pause) => {}
             _ = cancel.wait_for(|&c| c) => return Err(Error::Cancelled),
@@ -174,11 +180,26 @@ pub(crate) async fn run(
 
     // 2. Lay out the files, picking up where an earlier attempt left off.
     let share = {
-        let (dest_dir, events, store, key) = (dest_dir.clone(), events.clone(), ctx.store.clone(), ctx.key.clone());
+        let (dest_dir, events, store, key) = (
+            dest_dir.clone(),
+            events.clone(),
+            ctx.store.clone(),
+            ctx.key.clone(),
+        );
         let secret = code.secret;
         tokio::task::spawn_blocking(move || -> Result<LocalShare> {
-            let share = LocalShare::for_download(manifest, manifest_bytes, &dest_dir, key.as_ref(), secret, events)?;
-            if let Some(saved) = store.as_ref().and_then(|s| s.load_progress(&share.id, &dest_dir)) {
+            let share = LocalShare::for_download(
+                manifest,
+                manifest_bytes,
+                &dest_dir,
+                key.as_ref(),
+                secret,
+                events,
+            )?;
+            if let Some(saved) = store
+                .as_ref()
+                .and_then(|s| s.load_progress(&share.id, &dest_dir))
+            {
                 share.restore_progress(saved)?;
             }
             Ok(share)
@@ -190,8 +211,14 @@ pub(crate) async fn run(
     let share = Arc::new(share);
     let restored = share.have_count();
     if restored > 0 {
-        let bytes = (0..share.total_pieces()).filter(|&i| share.has(i)).map(|i| share.piece_len(i)).sum();
-        let _ = events.send(Event::Resumed { pieces: restored, bytes });
+        let bytes = (0..share.total_pieces())
+            .filter(|&i| share.has(i))
+            .map(|i| share.piece_len(i))
+            .sum();
+        let _ = events.send(Event::Resumed {
+            pieces: restored,
+            bytes,
+        });
     }
     if let Some(store) = &ctx.store {
         store.remember_download(&code, &dest_dir)?;
@@ -268,8 +295,8 @@ pub(crate) async fn run(
     {
         let share = Arc::clone(&share);
         tokio::task::spawn_blocking(move || share.verify())
-        .await
-        .map_err(|e| Error::Task(e.to_string()))??;
+            .await
+            .map_err(|e| Error::Task(e.to_string()))??;
     }
     if let Some(store) = &ctx.store {
         store.save_progress(&share, &dest_dir);
@@ -286,7 +313,11 @@ pub(crate) async fn run(
 }
 
 /// Connect to one peer from a share code and see how well that works.
-pub(crate) async fn check_peer(node: &ChorrentNode, code: &ShareCode, addr: EndpointAddr) -> crate::client::PeerCheck {
+pub(crate) async fn check_peer(
+    node: &ChorrentNode,
+    code: &ShareCode,
+    addr: EndpointAddr,
+) -> crate::client::PeerCheck {
     use futures_lite::StreamExt;
     let mut check = crate::client::PeerCheck {
         peer: addr.id.to_string(),
@@ -314,7 +345,15 @@ pub(crate) async fn check_peer(node: &ChorrentNode, code: &ShareCode, addr: Endp
     };
     check.reachable = true;
     let auth = code.secret.map(|s| access_token(&s, &node.id()));
-    match request(&conn, &Request::Manifest { share: code.id, auth }).await {
+    match request(
+        &conn,
+        &Request::Manifest {
+            share: code.id,
+            auth,
+        },
+    )
+    .await
+    {
         Ok(Response::Manifest(_)) => check.serves_share = true,
         Ok(_) => check.problem = Some("reachable, but it doesn't serve this share to us".into()),
         Err(e) => check.problem = Some(format!("reachable, but the request failed: {e}")),
@@ -338,12 +377,17 @@ pub(crate) async fn check_peer(node: &ChorrentNode, code: &ShareCode, addr: Endp
 
 /// The round-trip time of the path a connection is using right now.
 fn selected_rtt(conn: &Connection) -> Option<Duration> {
-    conn.paths().iter().find(|p| p.is_selected()).map(|p| p.rtt())
+    conn.paths()
+        .iter()
+        .find(|p| p.is_selected())
+        .map(|p| p.rtt())
 }
 
 /// How many requests to keep in flight to a peer this far away.
 fn requests_for(rtt: Option<Duration>) -> usize {
-    let Some(rtt) = rtt else { return REQUESTS_PER_PEER };
+    let Some(rtt) = rtt else {
+        return REQUESTS_PER_PEER;
+    };
     let bytes_in_flight = TARGET_BYTES_PER_SEC as f64 * rtt.as_secs_f64();
     let pieces = (bytes_in_flight / crate::chunker::BLOCK_SIZE.bytes() as f64).ceil() as usize;
     pieces.clamp(REQUESTS_PER_PEER, MAX_REQUESTS_PER_PEER)
@@ -354,40 +398,70 @@ async fn watch_path(conn: Connection, peer: EndpointId, events: broadcast::Sende
     let mut snapshots = conn.paths_stream();
     let mut last = None;
     while let Some(paths) = snapshots.next().await {
-        let Some(selected) = paths.iter().find(|p| p.is_selected()) else { continue };
+        let Some(selected) = paths.iter().find(|p| p.is_selected()) else {
+            continue;
+        };
         let direct = selected.is_ip();
         if last != Some(direct) {
             last = Some(direct);
             let rtt_ms = selected.rtt().as_millis() as u64;
-            let _ = events.send(Event::PeerPath { peer: peer.to_string(), direct, rtt_ms });
+            let _ = events.send(Event::PeerPath {
+                peer: peer.to_string(),
+                direct,
+                rtt_ms,
+            });
         }
     }
 }
 
 async fn connect(node: &ChorrentNode, addr: EndpointAddr) -> Option<Connection> {
-    tokio::time::timeout(CONNECT_TIMEOUT, node.connect(addr)).await.ok()?.ok()
+    tokio::time::timeout(CONNECT_TIMEOUT, node.connect(addr))
+        .await
+        .ok()?
+        .ok()
 }
 
 async fn request(conn: &Connection, req: &Request) -> Result<Response> {
     let exchange = async {
-        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| ProtocolError::Send { message: e.to_string() })?;
+        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| ProtocolError::Send {
+            message: e.to_string(),
+        })?;
         protocol::write_frame(&mut send, req).await?;
         let _ = send.finish();
         Ok(protocol::expect_frame(&mut recv).await?)
     };
     tokio::time::timeout(REQUEST_TIMEOUT, exchange)
         .await
-        .unwrap_or_else(|_| Err(ProtocolError::Receive { message: "request timed out".into() }.into()))
+        .unwrap_or_else(|_| {
+            Err(ProtocolError::Receive {
+                message: "request timed out".into(),
+            }
+            .into())
+        })
 }
 
-async fn fetch_manifest(conn: &Connection, code: &ShareCode, auth: Option<[u8; 32]>) -> Result<(Manifest, Vec<u8>)> {
-    match request(conn, &Request::Manifest { share: code.id, auth }).await? {
+async fn fetch_manifest(
+    conn: &Connection,
+    code: &ShareCode,
+    auth: Option<[u8; 32]>,
+) -> Result<(Manifest, Vec<u8>)> {
+    match request(
+        conn,
+        &Request::Manifest {
+            share: code.id,
+            auth,
+        },
+    )
+    .await?
+    {
         Response::Manifest(bytes) if bytes.len() <= MAX_MANIFEST_BYTES => {
             let manifest = Manifest::decode_verified(&bytes, code.id)?;
             // The share code is what the user saw before agreeing to download;
             // don't let it understate what actually arrives.
             if manifest.total_size() != code.total_size || manifest.name() != code.name {
-                return Err(Error::BadManifest("it doesn't match the name or size in the share code".into()));
+                return Err(Error::BadManifest(
+                    "it doesn't match the name or size in the share code".into(),
+                ));
             }
             Ok((manifest, bytes))
         }
@@ -407,12 +481,19 @@ struct PeerTracker {
 
 impl PeerTracker {
     fn new(me: EndpointId, events: broadcast::Sender<Event>) -> Self {
-        Self { me, discovered: HashSet::new(), last_attempt: HashMap::new(), events }
+        Self {
+            me,
+            discovered: HashSet::new(),
+            last_attempt: HashMap::new(),
+            events,
+        }
     }
 
     fn discover(&mut self, id: EndpointId) {
         if self.discovered.insert(id) {
-            let _ = self.events.send(Event::PeerDiscovered { peer: id.to_string() });
+            let _ = self.events.send(Event::PeerDiscovered {
+                peer: id.to_string(),
+            });
         }
     }
 
@@ -478,7 +559,9 @@ impl Engine {
         self.connected.lock().unwrap().remove(&peer);
         self.wake.notify_waiters();
         if was_used && !self.is_done() {
-            let _ = self.events.send(Event::PeerDisconnected { peer: peer.to_string() });
+            let _ = self.events.send(Event::PeerDisconnected {
+                peer: peer.to_string(),
+            });
         }
     }
 
@@ -488,8 +571,19 @@ impl Engine {
     async fn drive_peer(self: &Arc<Self>, conn: &Connection, peer: EndpointId) -> bool {
         let share_id = self.share.id;
         let total = self.share.total_pieces();
-        let Ok((mut send, mut recv)) = conn.open_bi().await else { return false };
-        if protocol::write_frame(&mut send, &Request::Subscribe { share: share_id, auth: self.auth }).await.is_err() {
+        let Ok((mut send, mut recv)) = conn.open_bi().await else {
+            return false;
+        };
+        if protocol::write_frame(
+            &mut send,
+            &Request::Subscribe {
+                share: share_id,
+                auth: self.auth,
+            },
+        )
+        .await
+        .is_err()
+        {
             return false;
         }
         let _ = send.finish();
@@ -521,9 +615,16 @@ impl Engine {
         let updates = async {
             loop {
                 match protocol::read_frame::<Response>(&mut recv).await {
-                    Ok(Some(Response::Have(piece))) => self.sched.lock().unwrap().set_peer_has(&peer, piece as usize),
+                    Ok(Some(Response::Have(piece))) => self
+                        .sched
+                        .lock()
+                        .unwrap()
+                        .set_peer_has(&peer, piece as usize),
                     Ok(Some(Response::Bitfield(bytes))) => {
-                        self.sched.lock().unwrap().add_peer(peer, unpack_bits(&bytes, total));
+                        self.sched
+                            .lock()
+                            .unwrap()
+                            .add_peer(peer, unpack_bits(&bytes, total));
                     }
                     Ok(Some(_)) => continue,
                     Ok(None) | Err(_) => break,
@@ -564,14 +665,20 @@ impl Engine {
                 continue;
             };
 
-            let req = Request::Piece { share: self.share.id, auth: self.auth, index: piece as u32 };
+            let req = Request::Piece {
+                share: self.share.id,
+                auth: self.auth,
+                index: piece as u32,
+            };
             match request(&conn, &req).await {
                 Ok(Response::Piece(encoded)) => {
                     if let Some(rate) = &self.rate {
                         rate.acquire(encoded.len() as u64).await;
                     }
                     let share = Arc::clone(&self.share);
-                    let stored = tokio::task::spawn_blocking(move || share.store_piece(piece, &encoded)).await;
+                    let stored =
+                        tokio::task::spawn_blocking(move || share.store_piece(piece, &encoded))
+                            .await;
                     match stored {
                         Ok(Ok(_)) => {
                             strikes.store(0, Ordering::Relaxed);
@@ -581,7 +688,10 @@ impl Engine {
                             };
                             if newly {
                                 let bytes = self.share.piece_len(piece);
-                                let _ = self.events.send(Event::PieceVerified { index: piece, bytes });
+                                let _ = self.events.send(Event::PieceVerified {
+                                    index: piece,
+                                    bytes,
+                                });
                             }
                             if done {
                                 self.finished.notify_one();
@@ -592,11 +702,17 @@ impl Engine {
                             // Bad data: never ask this peer for this piece again.
                             strikes.fetch_add(1, Ordering::Relaxed);
                             self.give_back(piece, &peer, true);
-                            let _ = self.events.send(Event::PieceFailed { index: piece, reason: e.to_string() });
+                            let _ = self.events.send(Event::PieceFailed {
+                                index: piece,
+                                reason: e.to_string(),
+                            });
                         }
                         Err(e) => {
                             self.give_back(piece, &peer, false);
-                            let _ = self.events.send(Event::PieceFailed { index: piece, reason: e.to_string() });
+                            let _ = self.events.send(Event::PieceFailed {
+                                index: piece,
+                                reason: e.to_string(),
+                            });
                         }
                     }
                 }
@@ -624,7 +740,10 @@ impl Engine {
     }
 
     fn give_back(&self, piece: usize, peer: &EndpointId, peer_lacks_it: bool) {
-        self.sched.lock().unwrap().failed(piece, peer, peer_lacks_it);
+        self.sched
+            .lock()
+            .unwrap()
+            .failed(piece, peer, peer_lacks_it);
         self.wake.notify_waiters();
     }
 }
@@ -637,7 +756,11 @@ mod tests {
     fn distant_peers_get_more_requests_in_flight() {
         let ms = |n| Some(Duration::from_millis(n));
         assert_eq!(requests_for(None), REQUESTS_PER_PEER);
-        assert_eq!(requests_for(ms(1)), REQUESTS_PER_PEER, "nearby peers keep the minimum");
+        assert_eq!(
+            requests_for(ms(1)),
+            REQUESTS_PER_PEER,
+            "nearby peers keep the minimum"
+        );
         // 12 MiB/s over 200 ms is 2.4 MiB in flight: 39 pieces of 64 KiB.
         assert_eq!(requests_for(ms(200)), 39);
         assert_eq!(requests_for(ms(900)), MAX_REQUESTS_PER_PEER, "capped");

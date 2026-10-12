@@ -6,13 +6,13 @@ use crate::limits::RateLimiter;
 use crate::local::SharedShare;
 use crate::manifest::ShareId;
 use crate::protocol::{self, Request, Response};
+use iroh::EndpointId;
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use iroh::EndpointId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{Semaphore, broadcast};
 use tokio::task::JoinSet;
 
 /// How long a piece request may wait for a free upload slot.
@@ -44,30 +44,49 @@ impl ProtocolHandler for ChorrentProtocol {
 }
 
 impl ChorrentProtocol {
-    fn lookup(&self, share: &ShareId, remote: &EndpointId, auth: Option<&[u8; 32]>) -> Option<SharedShare> {
+    fn lookup(
+        &self,
+        share: &ShareId,
+        remote: &EndpointId,
+        auth: Option<&[u8; 32]>,
+    ) -> Option<SharedShare> {
         let shares = self.shares.read().unwrap();
-        shares.get(share).filter(|s| s.authorized(remote, auth)).cloned()
+        shares
+            .get(share)
+            .filter(|s| s.authorized(remote, auth))
+            .cloned()
     }
 
     fn still_registered(&self, share: &SharedShare) -> bool {
-        self.shares.read().unwrap().get(&share.id).is_some_and(|s| Arc::ptr_eq(s, share))
+        self.shares
+            .read()
+            .unwrap()
+            .get(&share.id)
+            .is_some_and(|s| Arc::ptr_eq(s, share))
     }
 
     async fn serve_stream(&self, remote: EndpointId, mut send: SendStream, mut recv: RecvStream) {
-        let Ok(request) = protocol::expect_frame::<Request>(&mut recv).await else { return };
+        let Ok(request) = protocol::expect_frame::<Request>(&mut recv).await else {
+            return;
+        };
         let response = match request {
-            Request::Manifest { share, auth } => match self.lookup(&share, &remote, auth.as_ref()) {
-                Some(s) => Response::Manifest(s.manifest_bytes.clone()),
-                None => Response::NotFound,
-            },
-            Request::Subscribe { share, auth } => match self.lookup(&share, &remote, auth.as_ref()) {
+            Request::Manifest { share, auth } => {
+                match self.lookup(&share, &remote, auth.as_ref()) {
+                    Some(s) => Response::Manifest(s.manifest_bytes.clone()),
+                    None => Response::NotFound,
+                }
+            }
+            Request::Subscribe { share, auth } => match self.lookup(&share, &remote, auth.as_ref())
+            {
                 Some(s) => return self.serve_subscription(s, send).await,
                 None => Response::NotFound,
             },
-            Request::Piece { share, auth, index } => match self.lookup(&share, &remote, auth.as_ref()) {
-                Some(s) => self.serve_piece(s, index as usize).await,
-                None => Response::NotFound,
-            },
+            Request::Piece { share, auth, index } => {
+                match self.lookup(&share, &remote, auth.as_ref()) {
+                    Some(s) => self.serve_piece(s, index as usize).await,
+                    None => Response::NotFound,
+                }
+            }
         };
         if protocol::write_frame(&mut send, &response).await.is_ok() {
             let _ = send.finish();
@@ -83,7 +102,9 @@ impl ChorrentProtocol {
         // Wait a while for a free upload slot rather than refusing at once: a
         // distant downloader keeps many requests queued, and refusing them
         // would only cause retries.
-        let Ok(Ok(_permit)) = tokio::time::timeout(UPLOAD_SLOT_WAIT, self.upload_slots.acquire()).await else {
+        let Ok(Ok(_permit)) =
+            tokio::time::timeout(UPLOAD_SLOT_WAIT, self.upload_slots.acquire()).await
+        else {
             return Response::Busy;
         };
         if let Some(limiter) = &self.upload_rate {
@@ -95,7 +116,9 @@ impl ChorrentProtocol {
         };
         match encoded {
             Ok(Ok(bytes)) => {
-                let _ = share.events.send(Event::Uploaded { bytes: bytes.len() as u64 });
+                let _ = share.events.send(Event::Uploaded {
+                    bytes: bytes.len() as u64,
+                });
                 Response::Piece(bytes)
             }
             _ => Response::DontHave,
@@ -106,7 +129,10 @@ impl ChorrentProtocol {
     /// peer goes away or this share stops being served.
     async fn serve_subscription(&self, share: SharedShare, mut send: SendStream) {
         let mut updates = share.have_tx.subscribe(); // before the snapshot, so nothing is missed
-        if protocol::write_frame(&mut send, &Response::Bitfield(share.packed_bitfield())).await.is_err() {
+        if protocol::write_frame(&mut send, &Response::Bitfield(share.packed_bitfield()))
+            .await
+            .is_err()
+        {
             return;
         }
         let mut check = tokio::time::interval(Duration::from_secs(5));

@@ -27,7 +27,11 @@ pub(crate) struct LocalFile {
 
 impl LocalFile {
     pub fn new(data: FileData, outboard: FileOutboard) -> Self {
-        Self { data, outboard: Mutex::new(outboard), writer: Mutex::new(None) }
+        Self {
+            data,
+            outboard: Mutex::new(outboard),
+            writer: Mutex::new(None),
+        }
     }
 }
 
@@ -44,7 +48,8 @@ impl StoreConfig {
     /// A fresh folder for a share being imported (its id isn't known until
     /// it's hashed, so the name is random).
     fn new_share_dir(&self) -> PathBuf {
-        self.blobs.join(format!("import-{}", hex(&rand::random::<[u8; 8]>())))
+        self.blobs
+            .join(format!("import-{}", hex(&rand::random::<[u8; 8]>())))
     }
 
     /// The folder a download of `id` goes to, the same every time so it
@@ -54,7 +59,8 @@ impl StoreConfig {
         match &self.key {
             None => self.blobs.join(id.to_string()),
             Some(key) => {
-                let name = blake3::keyed_hash(&key.derive("chorrent blob folder names v1"), id.as_bytes());
+                let name =
+                    blake3::keyed_hash(&key.derive("chorrent blob folder names v1"), id.as_bytes());
                 self.blobs.join(name.to_hex().as_str())
             }
         }
@@ -84,7 +90,10 @@ pub(crate) struct LocalShare {
 
 impl std::fmt::Debug for LocalShare {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalShare").field("id", &self.id).field("name", &self.manifest.name()).finish()
+        f.debug_struct("LocalShare")
+            .field("id", &self.id)
+            .field("name", &self.manifest.name())
+            .finish()
     }
 }
 
@@ -101,16 +110,28 @@ impl LocalShare {
         let encrypted = store.and_then(|s| s.key.clone().map(|key| (s.new_share_dir(), key)));
         let (manifest, hashed) = match &encrypted {
             None => Manifest::from_disk(root, |_, path, _| {
-                Ok((FileData::Plain(path.to_path_buf()), chunker::hash_file(path)?))
+                Ok((
+                    FileData::Plain(path.to_path_buf()),
+                    chunker::hash_file(path)?,
+                ))
             })?,
             Some((dir, key)) => Manifest::from_disk(root, |index, path, size| {
-                let data = FileData::Encrypted { path: dir.join(format!("{index}.enc")), key: key.clone(), size };
-                let source = std::fs::File::open(path).map_err(|source| Error::Io { path: path.to_path_buf(), source })?;
+                let data = FileData::Encrypted {
+                    path: dir.join(format!("{index}.enc")),
+                    key: key.clone(),
+                    size,
+                };
+                let source = std::fs::File::open(path).map_err(|source| Error::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
                 let outboard = chunker::import(source, size, &data)?;
                 Ok((data, outboard))
             })?,
         };
-        let share_root = encrypted.map(|(dir, _)| dir).unwrap_or_else(|| root.to_path_buf());
+        let share_root = encrypted
+            .map(|(dir, _)| dir)
+            .unwrap_or_else(|| root.to_path_buf());
         Ok(Self::assemble(manifest, hashed, secret, events, share_root))
     }
 
@@ -126,7 +147,11 @@ impl LocalShare {
     ) -> Result<Self> {
         let dir = store.new_share_dir();
         let data = match &store.key {
-            Some(key) => FileData::Encrypted { path: dir.join("0.enc"), key: key.clone(), size },
+            Some(key) => FileData::Encrypted {
+                path: dir.join("0.enc"),
+                key: key.clone(),
+                size,
+            },
             None => FileData::Plain(dir.join(name)),
         };
         let outboard = chunker::import(reader, size, &data)?;
@@ -135,7 +160,13 @@ impl LocalShare {
             FileData::Plain(path) => path.clone(),
             FileData::Encrypted { .. } => dir,
         };
-        Ok(Self::assemble(manifest, vec![(data, outboard)], secret, events, root))
+        Ok(Self::assemble(
+            manifest,
+            vec![(data, outboard)],
+            secret,
+            events,
+            root,
+        ))
     }
 
     fn assemble(
@@ -185,7 +216,8 @@ impl LocalShare {
                     full
                 }
                 _ => {
-                    chunker::preallocate(&data, entry.size()).map_err(|source| Error::Io { path, source })?;
+                    chunker::preallocate(&data, entry.size())
+                        .map_err(|source| Error::Io { path, source })?;
                     chunker::empty_outboard(entry.root_hash(), entry.size())
                 }
             };
@@ -240,7 +272,12 @@ impl LocalShare {
     }
 
     pub fn has(&self, piece: usize) -> bool {
-        self.have.read().unwrap().get(piece).copied().unwrap_or(false)
+        self.have
+            .read()
+            .unwrap()
+            .get(piece)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub fn have_snapshot(&self) -> Vec<bool> {
@@ -298,17 +335,32 @@ impl LocalShare {
         let nodes = {
             let mut writer = file.writer.lock().unwrap();
             if writer.is_none() {
-                let handle = file.data.open(true).map_err(|source| ChunkerError::Receive {
-                    path: file.data.path().to_path_buf(),
-                    source,
-                })?;
+                let handle = file
+                    .data
+                    .open(true)
+                    .map_err(|source| ChunkerError::Receive {
+                        path: file.data.path().to_path_buf(),
+                        source,
+                    })?;
                 *writer = Some(handle);
             }
             let handle = writer.as_mut().expect("opened above");
-            chunker::decode_range(handle, file.data.path(), entry.root_hash(), entry.size(), loc.start, loc.end, encoded)?
+            chunker::decode_range(
+                handle,
+                file.data.path(),
+                entry.root_hash(),
+                entry.size(),
+                loc.start,
+                loc.end,
+                encoded,
+            )?
         };
-        chunker::apply_proof(&mut file.outboard.lock().unwrap(), &nodes)
-            .map_err(|source| ChunkerError::Receive { path: file.data.path().to_path_buf(), source })?;
+        chunker::apply_proof(&mut file.outboard.lock().unwrap(), &nodes).map_err(|source| {
+            ChunkerError::Receive {
+                path: file.data.path().to_path_buf(),
+                source,
+            }
+        })?;
         self.mark_have(piece);
         Ok(true)
     }
@@ -335,14 +387,20 @@ impl LocalShare {
                 continue; // saved state doesn't fit this file; start it over
             }
             outboard.data = data;
-            let ranges = chunker::valid_byte_ranges(&file.data, &outboard)
-                .map_err(|source| Error::Io { path: file.data.path().to_path_buf(), source })?;
+            let ranges =
+                chunker::valid_byte_ranges(&file.data, &outboard).map_err(|source| Error::Io {
+                    path: file.data.path().to_path_buf(),
+                    source,
+                })?;
             drop(outboard);
             let size = self.manifest.files()[index].size();
             for piece in self.layout.pieces_of(index) {
                 let loc = self.layout.locate(piece);
                 let end = loc.end.min(size);
-                if ranges.iter().any(|r| r.start <= loc.start && r.end.min(size) >= end) {
+                if ranges
+                    .iter()
+                    .any(|r| r.start <= loc.start && r.end.min(size) >= end)
+                {
                     self.mark_have(piece);
                 }
             }
@@ -371,9 +429,14 @@ impl LocalShare {
     }
 
     fn check_file(&self, index: usize) -> Result<&LocalFile> {
-        let file = self.files.get(index).ok_or_else(|| Error::NotAvailable(format!("no file number {index}")))?;
+        let file = self
+            .files
+            .get(index)
+            .ok_or_else(|| Error::NotAvailable(format!("no file number {index}")))?;
         if !self.layout.pieces_of(index).all(|p| self.has(p)) {
-            return Err(Error::NotAvailable("that file hasn't finished downloading".into()));
+            return Err(Error::NotAvailable(
+                "that file hasn't finished downloading".into(),
+            ));
         }
         Ok(file)
     }
@@ -386,8 +449,13 @@ impl LocalShare {
         let len = len.min(size.saturating_sub(offset) as usize);
         let mut buf = vec![0u8; len];
         let path = file.data.path().to_path_buf();
-        let handle = file.data.open_strict().map_err(|source| Error::Io { path: path.clone(), source })?;
-        handle.read_exact_at(offset, &mut buf).map_err(|source| Error::Io { path, source })?;
+        let handle = file.data.open_strict().map_err(|source| Error::Io {
+            path: path.clone(),
+            source,
+        })?;
+        handle
+            .read_exact_at(offset, &mut buf)
+            .map_err(|source| Error::Io { path, source })?;
         Ok(buf)
     }
 
@@ -395,22 +463,39 @@ impl LocalShare {
     /// (which must not exist yet). Blocking (copies the file).
     pub fn export_file(&self, index: usize, dest: &Path) -> Result<()> {
         let file = self.check_file(index)?;
-        let io_err = |source| Error::Io { path: dest.to_path_buf(), source };
+        let io_err = |source| Error::Io {
+            path: dest.to_path_buf(),
+            source,
+        };
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(io_err)?;
         }
-        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(dest).map_err(io_err)?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dest)
+            .map_err(io_err)?;
         let mut reader = file.data.reader().map_err(io_err)?;
-        let copied = std::io::copy(&mut (&mut reader).take(self.manifest.files()[index].size()), &mut out).map_err(io_err)?;
+        let copied = std::io::copy(
+            &mut (&mut reader).take(self.manifest.files()[index].size()),
+            &mut out,
+        )
+        .map_err(io_err)?;
         if copied != self.manifest.files()[index].size() {
             let _ = std::fs::remove_file(dest);
-            return Err(io_err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "file shorter than expected")));
+            return Err(io_err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "file shorter than expected",
+            )));
         }
         Ok(())
     }
 
     pub fn outboard_snapshots(&self) -> Vec<Vec<u8>> {
-        self.files.iter().map(|f| f.outboard.lock().unwrap().data.clone()).collect()
+        self.files
+            .iter()
+            .map(|f| f.outboard.lock().unwrap().data.clone())
+            .collect()
     }
 }
 

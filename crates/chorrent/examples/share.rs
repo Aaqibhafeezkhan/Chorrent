@@ -10,7 +10,12 @@ async fn main() -> chorrent::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let client = Client::new().await?;
 
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
         ["seed", path] => {
             let seed = client.seed(path).await?;
             println!("Share code: {}", seed.share_code());

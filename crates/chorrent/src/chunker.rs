@@ -11,9 +11,9 @@ use crate::storage::{FileData, Handle, ImportingReader};
 use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::round_up_to_chunks;
 use bao_tree::io::sync::{
-    decode_ranges, encode_ranges_validated, valid_ranges, CreateOutboard, Outboard, OutboardMut,
+    CreateOutboard, Outboard, OutboardMut, decode_ranges, encode_ranges_validated, valid_ranges,
 };
-use bao_tree::{blake3, BaoTree, BlockSize, ByteRanges, ChunkNum, TreeNode};
+use bao_tree::{BaoTree, BlockSize, ByteRanges, ChunkNum, TreeNode, blake3};
 use blake3::Hash;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Cursor};
@@ -28,9 +28,15 @@ pub(crate) type ProofNodes = Vec<(TreeNode, (Hash, Hash))>;
 
 /// Hash a whole file, producing its complete outboard.
 pub(crate) fn hash_file(path: &Path) -> Result<FileOutboard, ChunkerError> {
-    let file = File::open(path).map_err(|source| ChunkerError::Open { path: path.to_path_buf(), source })?;
-    let mut outboard = FileOutboard::create(file, BLOCK_SIZE)
-        .map_err(|source| ChunkerError::Hash { path: path.to_path_buf(), source })?;
+    let file = File::open(path).map_err(|source| ChunkerError::Open {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut outboard =
+        FileOutboard::create(file, BLOCK_SIZE).map_err(|source| ChunkerError::Hash {
+            path: path.to_path_buf(),
+            source,
+        })?;
     let full = outboard.tree.outboard_size() as usize;
     outboard.data.resize(full, 0);
     Ok(outboard)
@@ -43,32 +49,61 @@ pub(crate) fn hash_data(data: &FileData, size: u64) -> Result<FileOutboard, Chun
         return hash_file(path);
     }
     let path = data.path().to_path_buf();
-    let reader = data.reader().map_err(|source| ChunkerError::Open { path: path.clone(), source })?;
+    let reader = data.reader().map_err(|source| ChunkerError::Open {
+        path: path.clone(),
+        source,
+    })?;
     let mut outboard = FileOutboard::create_sized(reader, size, BLOCK_SIZE)
         .map_err(|source| ChunkerError::Hash { path, source })?;
-    outboard.data.resize(outboard.tree.outboard_size() as usize, 0);
+    outboard
+        .data
+        .resize(outboard.tree.outboard_size() as usize, 0);
     Ok(outboard)
 }
 
 /// Read `source` once, storing it into `dest` while hashing it.
-pub(crate) fn import<R: std::io::Read>(source: R, size: u64, dest: &FileData) -> Result<FileOutboard, ChunkerError> {
+pub(crate) fn import<R: std::io::Read>(
+    source: R,
+    size: u64,
+    dest: &FileData,
+) -> Result<FileOutboard, ChunkerError> {
     let path = dest.path().to_path_buf();
-    let mut importer = ImportingReader::new(source, dest).map_err(|source| ChunkerError::Open { path: path.clone(), source })?;
-    let mut outboard = FileOutboard::create_sized(&mut importer, size, BLOCK_SIZE)
-        .map_err(|source| ChunkerError::Hash { path: path.clone(), source })?;
-    let written = importer.finish().map_err(|source| ChunkerError::Hash { path: path.clone(), source })?;
+    let mut importer = ImportingReader::new(source, dest).map_err(|source| ChunkerError::Open {
+        path: path.clone(),
+        source,
+    })?;
+    let mut outboard =
+        FileOutboard::create_sized(&mut importer, size, BLOCK_SIZE).map_err(|source| {
+            ChunkerError::Hash {
+                path: path.clone(),
+                source,
+            }
+        })?;
+    let written = importer.finish().map_err(|source| ChunkerError::Hash {
+        path: path.clone(),
+        source,
+    })?;
     if written != size {
-        let source = io::Error::new(io::ErrorKind::UnexpectedEof, format!("expected {size} bytes, got {written}"));
+        let source = io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("expected {size} bytes, got {written}"),
+        );
         return Err(ChunkerError::Hash { path, source });
     }
-    outboard.data.resize(outboard.tree.outboard_size() as usize, 0);
+    outboard
+        .data
+        .resize(outboard.tree.outboard_size() as usize, 0);
     Ok(outboard)
 }
 
 /// An outboard with no inner hashes known yet, for a file we're about to download.
 pub(crate) fn empty_outboard(root: Hash, size: u64) -> FileOutboard {
     let tree = BaoTree::new(size, BLOCK_SIZE);
-    PreOrderOutboard { root, tree, data: vec![0; tree.outboard_size() as usize] }
+    PreOrderOutboard {
+        root,
+        tree,
+        data: vec![0; tree.outboard_size() as usize],
+    }
 }
 
 /// Cut out bytes `start..end` of a file plus the proof needed to verify them.
@@ -79,11 +114,18 @@ pub(crate) fn encode_range(
     end: u64,
 ) -> Result<Vec<u8>, ChunkerError> {
     let path = data.path();
-    let file = data.open(false).map_err(|source| ChunkerError::Open { path: path.to_path_buf(), source })?;
+    let file = data.open(false).map_err(|source| ChunkerError::Open {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let ranges = round_up_to_chunks(&ByteRanges::from(start..end));
     let mut encoded = Vec::new();
-    encode_ranges_validated(&file, outboard, &ranges, &mut encoded)
-        .map_err(|source| ChunkerError::Serve { path: path.to_path_buf(), source: source.into() })?;
+    encode_ranges_validated(&file, outboard, &ranges, &mut encoded).map_err(|source| {
+        ChunkerError::Serve {
+            path: path.to_path_buf(),
+            source: source.into(),
+        }
+    })?;
     Ok(encoded)
 }
 
@@ -99,9 +141,17 @@ pub(crate) fn decode_range(
     encoded: &[u8],
 ) -> Result<ProofNodes, ChunkerError> {
     let ranges = round_up_to_chunks(&ByteRanges::from(start..end));
-    let mut recorder = RecordingOutboard { root, tree: BaoTree::new(size, BLOCK_SIZE), nodes: Vec::new() };
-    decode_ranges(Cursor::new(encoded), &ranges, dest, &mut recorder)
-        .map_err(|source| ChunkerError::Receive { path: path.to_path_buf(), source: source.into() })?;
+    let mut recorder = RecordingOutboard {
+        root,
+        tree: BaoTree::new(size, BLOCK_SIZE),
+        nodes: Vec::new(),
+    };
+    decode_ranges(Cursor::new(encoded), &ranges, dest, &mut recorder).map_err(|source| {
+        ChunkerError::Receive {
+            path: path.to_path_buf(),
+            source: source.into(),
+        }
+    })?;
     Ok(recorder.nodes)
 }
 
@@ -114,7 +164,10 @@ pub(crate) fn apply_proof(outboard: &mut FileOutboard, nodes: &ProofNodes) -> io
 
 /// Which bytes of a (possibly partial) file are present and verified by the
 /// outboard. Used to resume downloads without trusting any saved bitfield.
-pub(crate) fn valid_byte_ranges(data: &FileData, outboard: &FileOutboard) -> io::Result<Vec<std::ops::Range<u64>>> {
+pub(crate) fn valid_byte_ranges(
+    data: &FileData,
+    outboard: &FileOutboard,
+) -> io::Result<Vec<std::ops::Range<u64>>> {
     let file = data.open(false)?;
     let all = bao_tree::ChunkRanges::from(ChunkNum(0)..);
     let mut out = Vec::new();
@@ -181,7 +234,10 @@ mod tests {
     fn same_content_gives_same_root_hash() {
         let (a, _) = source(5000);
         let (b, _) = source(5000);
-        assert_eq!(hash_file(a.path()).unwrap().root, hash_file(b.path()).unwrap().root);
+        assert_eq!(
+            hash_file(a.path()).unwrap().root,
+            hash_file(b.path()).unwrap().root
+        );
     }
 
     #[test]
@@ -196,20 +252,56 @@ mod tests {
         let b_path = dir.path().join("b");
         preallocate(&FileData::Plain(b_path.clone()), size).unwrap();
         let mut b_outboard = empty_outboard(full.root, size);
-        let encoded = encode_range(&FileData::Plain(src.path().to_path_buf()), &full, piece, 2 * piece).unwrap();
-        let nodes = decode_range(&mut FileData::Plain(b_path.clone()).open(true).unwrap(), &b_path, full.root, size, piece, 2 * piece, &encoded).unwrap();
+        let encoded = encode_range(
+            &FileData::Plain(src.path().to_path_buf()),
+            &full,
+            piece,
+            2 * piece,
+        )
+        .unwrap();
+        let nodes = decode_range(
+            &mut FileData::Plain(b_path.clone()).open(true).unwrap(),
+            &b_path,
+            full.root,
+            size,
+            piece,
+            2 * piece,
+            &encoded,
+        )
+        .unwrap();
         apply_proof(&mut b_outboard, &nodes).unwrap();
 
         // ...and can serve it to peer C, who verifies it against the same root.
         let c_path = dir.path().join("c");
         preallocate(&FileData::Plain(c_path.clone()), size).unwrap();
-        let onward = encode_range(&FileData::Plain(b_path.clone()), &b_outboard, piece, 2 * piece).unwrap();
-        decode_range(&mut FileData::Plain(c_path.clone()).open(true).unwrap(), &c_path, full.root, size, piece, 2 * piece, &onward).unwrap();
+        let onward = encode_range(
+            &FileData::Plain(b_path.clone()),
+            &b_outboard,
+            piece,
+            2 * piece,
+        )
+        .unwrap();
+        decode_range(
+            &mut FileData::Plain(c_path.clone()).open(true).unwrap(),
+            &c_path,
+            full.root,
+            size,
+            piece,
+            2 * piece,
+            &onward,
+        )
+        .unwrap();
         let c = std::fs::read(&c_path).unwrap();
-        assert_eq!(&c[piece as usize..2 * piece as usize], &content[piece as usize..2 * piece as usize]);
+        assert_eq!(
+            &c[piece as usize..2 * piece as usize],
+            &content[piece as usize..2 * piece as usize]
+        );
 
         // B's file only verifies where it actually has data.
-        assert_eq!(valid_byte_ranges(&FileData::Plain(b_path.clone()), &b_outboard).unwrap(), vec![piece..2 * piece]);
+        assert_eq!(
+            valid_byte_ranges(&FileData::Plain(b_path.clone()), &b_outboard).unwrap(),
+            vec![piece..2 * piece]
+        );
     }
 
     #[test]
@@ -217,13 +309,25 @@ mod tests {
         let (src, content) = source(2 * BLOCK_SIZE.bytes() + 10);
         let size = content.len() as u64;
         let full = hash_file(src.path()).unwrap();
-        let mut encoded = encode_range(&FileData::Plain(src.path().to_path_buf()), &full, 0, 1000).unwrap();
+        let mut encoded =
+            encode_range(&FileData::Plain(src.path().to_path_buf()), &full, 0, 1000).unwrap();
         let last = encoded.len() - 1;
         encoded[last] ^= 0xff;
 
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("d");
         preallocate(&FileData::Plain(dest.clone()), size).unwrap();
-        assert!(decode_range(&mut FileData::Plain(dest.clone()).open(true).unwrap(), &dest, full.root, size, 0, 1000, &encoded).is_err());
+        assert!(
+            decode_range(
+                &mut FileData::Plain(dest.clone()).open(true).unwrap(),
+                &dest,
+                full.root,
+                size,
+                0,
+                1000,
+                &encoded
+            )
+            .is_err()
+        );
     }
 }

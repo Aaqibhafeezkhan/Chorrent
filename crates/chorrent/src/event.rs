@@ -17,15 +17,28 @@ pub enum Event {
     /// We learned about a peer for this share (from the share code or gossip).
     PeerDiscovered { peer: String },
     /// We got the share's file list and verified it. Sent once, before any pieces.
-    ManifestReceived { name: String, files: usize, total_size: u64, total_pieces: usize },
+    ManifestReceived {
+        name: String,
+        files: usize,
+        total_size: u64,
+        total_pieces: usize,
+    },
     /// Pieces already on disk from an earlier, interrupted download.
     Resumed { pieces: usize, bytes: u64 },
     /// We connected to a peer and learned which pieces it holds.
-    PeerConnected { peer: String, pieces: usize, total: usize },
+    PeerConnected {
+        peer: String,
+        pieces: usize,
+        total: usize,
+    },
     /// How we reach a peer: `direct` (hole punched, fastest) or through a
     /// relay server (works everywhere, but slower). Sent when known and
     /// again whenever it changes.
-    PeerPath { peer: String, direct: bool, rtt_ms: u64 },
+    PeerPath {
+        peer: String,
+        direct: bool,
+        rtt_ms: u64,
+    },
     /// How many peers we are directly linked to in the share's swarm
     /// (gossip). 0 means other seeders and downloaders cannot discover us
     /// yet; we keep trying to (re)join. Sent whenever it changes.

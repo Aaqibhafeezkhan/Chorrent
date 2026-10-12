@@ -19,7 +19,11 @@ pub enum Error {
     Protocol(#[from] ProtocolError),
 
     #[error("failed to read {path}: {source}")]
-    Io { path: PathBuf, #[source] source: std::io::Error },
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("failed to join the gossip network: {0}")]
     Gossip(String),
@@ -63,16 +67,32 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, Error)]
 pub enum ChunkerError {
     #[error("failed to open {path}: {source}")]
-    Open { path: PathBuf, #[source] source: std::io::Error },
+    Open {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("failed to hash {path}: {source}")]
-    Hash { path: PathBuf, #[source] source: std::io::Error },
+    Hash {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("failed to extract a piece from {path}: {source}")]
-    Serve { path: PathBuf, #[source] source: std::io::Error },
+    Serve {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("failed to verify/save an incoming piece to {path}: {source}")]
-    Receive { path: PathBuf, #[source] source: std::io::Error },
+    Receive {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Error)]

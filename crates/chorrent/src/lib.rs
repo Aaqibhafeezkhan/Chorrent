@@ -45,14 +45,14 @@ mod storage;
 mod store;
 
 pub use client::{
-    Client, ClientBuilder, DownloadHandle, DownloadOptions, Finished, NetworkStatus, PeerCheck, SeedHandle,
-    SeedOptions, Transfer,
+    Client, ClientBuilder, DownloadHandle, DownloadOptions, Finished, NetworkStatus, PeerCheck,
+    SeedHandle, SeedOptions, Transfer,
 };
+pub use error::{Error, Result};
+pub use event::Event;
 /// Re-exported so embedding apps name the same types (keep your iroh
 /// dependency semver-compatible with chorrent's).
 pub use iroh::{Endpoint, EndpointId};
-pub use error::{Error, Result};
-pub use event::Event;
 pub use manifest::{FileEntry, Manifest, ShareId};
 pub use share::ShareCode;
 pub use store::SavedTransfer;

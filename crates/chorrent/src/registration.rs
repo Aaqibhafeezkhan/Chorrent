@@ -17,14 +17,20 @@ impl Registration {
             return Err(Error::AlreadySharing);
         }
         shares.insert(share.id, Arc::clone(&share));
-        Ok(Self { registry: Arc::clone(registry), share })
+        Ok(Self {
+            registry: Arc::clone(registry),
+            share,
+        })
     }
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
         let mut shares = self.registry.write().unwrap();
-        if shares.get(&self.share.id).is_some_and(|s| Arc::ptr_eq(s, &self.share)) {
+        if shares
+            .get(&self.share.id)
+            .is_some_and(|s| Arc::ptr_eq(s, &self.share))
+        {
             shares.remove(&self.share.id);
         }
     }

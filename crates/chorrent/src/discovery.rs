@@ -11,8 +11,8 @@ use iroh_gossip::api::{Event as GossipEvent, GossipReceiver, GossipSender};
 use iroh_gossip::proto::TopicId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
@@ -36,7 +36,12 @@ async fn predial(node: &Arc<ChorrentNode>, peers: &[EndpointAddr]) -> Vec<Connec
     let mut dials = tokio::task::JoinSet::new();
     for peer in peers.iter().filter(|p| p.id != node.id() && !p.is_empty()) {
         let (node, peer) = (Arc::clone(node), peer.clone());
-        dials.spawn(async move { tokio::time::timeout(DIAL_TIMEOUT, node.connect(peer)).await.ok()?.ok() });
+        dials.spawn(async move {
+            tokio::time::timeout(DIAL_TIMEOUT, node.connect(peer))
+                .await
+                .ok()?
+                .ok()
+        });
     }
     dials.join_all().await.into_iter().flatten().collect()
 }
@@ -58,9 +63,17 @@ pub(crate) struct Swarm {
 /// Join the share's gossip topic. Returns once subscribed (joining carries
 /// on in the background); then run [`keep`] for as long as we're in it.
 pub(crate) async fn join(swarm: &Swarm) -> Result<(GossipSender, GossipReceiver, Vec<Connection>)> {
-    let gossip = swarm.node.gossip().ok_or_else(|| Error::Gossip("gossip is disabled".into()))?;
+    let gossip = swarm
+        .node
+        .gossip()
+        .ok_or_else(|| Error::Gossip("gossip is disabled".into()))?;
     let warm = predial(&swarm.node, &swarm.bootstrap).await;
-    let ids = swarm.bootstrap.iter().map(|p| p.id).filter(|id| *id != swarm.node.id()).collect();
+    let ids = swarm
+        .bootstrap
+        .iter()
+        .map(|p| p.id)
+        .filter(|id| *id != swarm.node.id())
+        .collect();
     let (sender, receiver) = gossip
         .subscribe(swarm.topic, ids)
         .await
@@ -71,12 +84,21 @@ pub(crate) async fn join(swarm: &Swarm) -> Result<(GossipSender, GossipReceiver,
 
 /// Stay in the swarm: announce with our current address, re-join when we
 /// have no neighbours, pass on peers we hear about, and report status.
-pub(crate) async fn keep(swarm: Swarm, sender: GossipSender, mut receiver: GossipReceiver, mut warm: Vec<Connection>) {
+pub(crate) async fn keep(
+    swarm: Swarm,
+    sender: GossipSender,
+    mut receiver: GossipReceiver,
+    mut warm: Vec<Connection>,
+) {
     let me = swarm.node.id();
     let mut neighbours: HashSet<EndpointId> = HashSet::new();
     // Everyone we've heard announce, as possible re-join points.
-    let mut known: HashMap<EndpointId, EndpointAddr> =
-        swarm.bootstrap.iter().filter(|p| p.id != me).map(|p| (p.id, p.clone())).collect();
+    let mut known: HashMap<EndpointId, EndpointAddr> = swarm
+        .bootstrap
+        .iter()
+        .filter(|p| p.id != me)
+        .map(|p| (p.id, p.clone()))
+        .collect();
     let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
     let mut last_rejoin = Instant::now();
     let _ = swarm.events.send(Event::SwarmPeers { connected: 0 });

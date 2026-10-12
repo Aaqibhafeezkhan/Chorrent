@@ -1,7 +1,7 @@
 use crate::error::NodeError;
 use crate::handler::ChorrentProtocol;
 use crate::protocol::ALPN;
-use iroh::endpoint::{presets, Connection};
+use iroh::endpoint::{Connection, presets};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use iroh_gossip::Gossip;
@@ -28,29 +28,40 @@ impl ChorrentNode {
         let builder = Endpoint::builder(presets::N0).secret_key(secret_key);
         #[cfg(feature = "mainline")]
         let builder = match mainline_dht {
-            true => builder.address_lookup(iroh_mainline_address_lookup::DhtAddressLookup::builder()),
+            true => {
+                builder.address_lookup(iroh_mainline_address_lookup::DhtAddressLookup::builder())
+            }
             false => builder,
         };
         #[cfg(not(feature = "mainline"))]
         let _ = mainline_dht;
-        let endpoint = builder
-            .bind()
-            .await
-            .map_err(|e| NodeError::Bind { message: e.to_string() })?;
+        let endpoint = builder.bind().await.map_err(|e| NodeError::Bind {
+            message: e.to_string(),
+        })?;
 
         let gossip = gossip.then(|| Gossip::builder().spawn(endpoint.clone()));
         let mut router = Router::builder(endpoint.clone()).accept(ALPN, Arc::new(handler.clone()));
         if let Some(gossip) = &gossip {
             router = router.accept(iroh_gossip::ALPN, gossip.clone());
         }
-        Ok(Self { endpoint, handler, gossip, router: Some(router.spawn()) })
+        Ok(Self {
+            endpoint,
+            handler,
+            gossip,
+            router: Some(router.spawn()),
+        })
     }
 
     /// Use an endpoint the embedding app owns. It must list our ALPNs and
     /// pass matching incoming connections to [`ChorrentNode::handle`].
     pub fn attach(endpoint: Endpoint, handler: ChorrentProtocol, gossip: bool) -> Self {
         let gossip = gossip.then(|| Gossip::builder().spawn(endpoint.clone()));
-        Self { endpoint, handler, gossip, router: None }
+        Self {
+            endpoint,
+            handler,
+            gossip,
+            router: None,
+        }
     }
 
     pub fn alpns(&self) -> Vec<Vec<u8>> {
@@ -65,7 +76,11 @@ impl ChorrentNode {
     pub async fn handle(&self, connection: Connection) -> Result<(), AcceptError> {
         if connection.alpn() == ALPN {
             self.handler.accept(connection).await
-        } else if let Some(gossip) = self.gossip.as_ref().filter(|_| connection.alpn() == iroh_gossip::ALPN) {
+        } else if let Some(gossip) = self
+            .gossip
+            .as_ref()
+            .filter(|_| connection.alpn() == iroh_gossip::ALPN)
+        {
             gossip.accept(connection).await
         } else {
             connection.close(0u32.into(), b"unknown protocol");
@@ -84,14 +99,18 @@ impl ChorrentNode {
     /// Wait until we're connected to a relay, for at most `timeout`.
     /// Returns whether we are.
     pub async fn wait_for_relay(&self, timeout: std::time::Duration) -> bool {
-        tokio::time::timeout(timeout, self.endpoint.online()).await.is_ok()
+        tokio::time::timeout(timeout, self.endpoint.online())
+            .await
+            .is_ok()
     }
 
     pub async fn connect(&self, addr: EndpointAddr) -> Result<Connection, NodeError> {
         self.endpoint
             .connect(addr, ALPN)
             .await
-            .map_err(|e| NodeError::Connect { message: e.to_string() })
+            .map_err(|e| NodeError::Connect {
+                message: e.to_string(),
+            })
     }
 
     /// Our relay server, if we are connected to one right now.

@@ -21,16 +21,18 @@
 use crate::chunker::FileOutboard;
 use crate::error::{Error, Result};
 use crate::local::{LocalFile, LocalShare, StoreConfig};
-use crate::storage::FileData;
-use iroh::EndpointId;
-use std::collections::HashSet;
 use crate::manifest::{Manifest, ShareId};
 use crate::share::ShareCode;
-use iroh::SecretKey;
+use crate::storage::FileData;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, TableHandle};
+use iroh::EndpointId;
+use iroh::SecretKey;
+use redb::{
+    Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, TableHandle,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
@@ -76,7 +78,11 @@ struct DownloadRecord {
 pub enum SavedTransfer {
     /// A share we were seeding, from the file or folder at `path`.
     #[allow(missing_docs)]
-    Seed { id: ShareId, path: PathBuf, private: bool },
+    Seed {
+        id: ShareId,
+        path: PathBuf,
+        private: bool,
+    },
     /// An unfinished download into `dest_dir`.
     #[allow(missing_docs)]
     Download { code: ShareCode, dest_dir: PathBuf },
@@ -122,7 +128,13 @@ impl Sealer {
         let aad = format!("{table}\0{stored_name}");
         let sealed = self
             .cipher
-            .encrypt(&XNonce::from(nonce), Payload { msg: &plain, aad: aad.as_bytes() })
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &plain,
+                    aad: aad.as_bytes(),
+                },
+            )
             .map_err(|_| storage_err("could not encrypt a database record"))?;
         let mut out = nonce.to_vec();
         out.extend(sealed);
@@ -131,7 +143,8 @@ impl Sealer {
 
     /// The real name and value of a sealed record.
     fn open(&self, table: &str, stored_name: &str, sealed: &[u8]) -> Result<(String, Vec<u8>)> {
-        let unreadable = || storage_err("a database record is damaged or was written with another key");
+        let unreadable =
+            || storage_err("a database record is damaged or was written with another key");
         if sealed.len() < 24 {
             return Err(unreadable());
         }
@@ -140,7 +153,13 @@ impl Sealer {
         let aad = format!("{table}\0{stored_name}");
         let plain = self
             .cipher
-            .decrypt(&nonce, Payload { msg: ciphertext, aad: aad.as_bytes() })
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: aad.as_bytes(),
+                },
+            )
             .map_err(|_| unreadable())?;
         postcard::from_bytes::<(String, Vec<u8>)>(&plain).map_err(|_| unreadable())
     }
@@ -156,7 +175,12 @@ fn download_key(id: &ShareId, dest_dir: &Path) -> String {
 
 fn modified(path: &Path) -> Option<(u64, u128)> {
     let meta = std::fs::metadata(path).ok()?;
-    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
     Some((meta.len(), mtime))
 }
 
@@ -164,7 +188,10 @@ impl Store {
     /// Open the data dir's database. With `storage_key`, it's sealed (see the
     /// module docs); a plain database that already has records is refused.
     pub fn open(data_dir: &Path, storage_key: Option<&[u8; 32]>) -> Result<Self> {
-        std::fs::create_dir_all(data_dir).map_err(|source| Error::Io { path: data_dir.to_path_buf(), source })?;
+        std::fs::create_dir_all(data_dir).map_err(|source| Error::Io {
+            path: data_dir.to_path_buf(),
+            source,
+        })?;
         let db = Database::create(data_dir.join("chorrent.redb")).map_err(|e| match e {
             redb::DatabaseError::DatabaseAlreadyOpen => Error::DataDirInUse(data_dir.to_path_buf()),
             e => storage_err(e),
@@ -174,7 +201,11 @@ impl Store {
             tx.open_table(table).map_err(storage_err)?;
         }
         tx.commit().map_err(storage_err)?;
-        let store = Self { db, write_lock: Mutex::new(()), sealer: storage_key.map(Sealer::new) };
+        let store = Self {
+            db,
+            write_lock: Mutex::new(()),
+            sealer: storage_key.map(Sealer::new),
+        };
         store.check_format(storage_key)?;
         Ok(store)
     }
@@ -216,7 +247,12 @@ impl Store {
     fn has_records(&self) -> Result<bool> {
         let tx = self.db.begin_read().map_err(storage_err)?;
         for table in RECORD_TABLES {
-            if !tx.open_table(table).map_err(storage_err)?.is_empty().map_err(storage_err)? {
+            if !tx
+                .open_table(table)
+                .map_err(storage_err)?
+                .is_empty()
+                .map_err(storage_err)?
+            {
                 return Ok(true);
             }
         }
@@ -233,13 +269,18 @@ impl Store {
     fn raw_get(&self, table: TableDefinition<&str, &[u8]>, name: &str) -> Result<Option<Vec<u8>>> {
         let tx = self.db.begin_read().map_err(storage_err)?;
         let t = tx.open_table(table).map_err(storage_err)?;
-        Ok(t.get(name).map_err(storage_err)?.map(|v| v.value().to_vec()))
+        Ok(t.get(name)
+            .map_err(storage_err)?
+            .map(|v| v.value().to_vec()))
     }
 
     fn raw_put(&self, table: TableDefinition<&str, &[u8]>, name: &str, value: &[u8]) -> Result<()> {
         let _guard = self.write_lock.lock().unwrap();
         let tx = self.db.begin_write().map_err(storage_err)?;
-        tx.open_table(table).map_err(storage_err)?.insert(name, value).map_err(storage_err)?;
+        tx.open_table(table)
+            .map_err(storage_err)?
+            .insert(name, value)
+            .map_err(storage_err)?;
         tx.commit().map_err(storage_err)
     }
 
@@ -253,13 +294,17 @@ impl Store {
 
     fn get(&self, table: TableDefinition<&str, &[u8]>, name: &str) -> Result<Option<Vec<u8>>> {
         let stored = self.stored_name(table, name);
-        let Some(value) = self.raw_get(table, &stored)? else { return Ok(None) };
+        let Some(value) = self.raw_get(table, &stored)? else {
+            return Ok(None);
+        };
         match &self.sealer {
             None => Ok(Some(value)),
             Some(sealer) => {
                 let (real_name, value) = sealer.open(table.name(), &stored, &value)?;
                 if real_name != name {
-                    return Err(storage_err("a database record doesn't belong where it's stored"));
+                    return Err(storage_err(
+                        "a database record doesn't belong where it's stored",
+                    ));
                 }
                 Ok(Some(value))
             }
@@ -270,7 +315,11 @@ impl Store {
         let stored = self.stored_name(table, name);
         match &self.sealer {
             None => self.raw_put(table, &stored, value),
-            Some(sealer) => self.raw_put(table, &stored, &sealer.seal(table.name(), &stored, name, value)?),
+            Some(sealer) => self.raw_put(
+                table,
+                &stored,
+                &sealer.seal(table.name(), &stored, name, value)?,
+            ),
         }
     }
 
@@ -279,7 +328,10 @@ impl Store {
         let tx = self.db.begin_write().map_err(storage_err)?;
         for table in tables {
             let stored = self.stored_name(*table, name);
-            tx.open_table(*table).map_err(storage_err)?.remove(stored.as_str()).map_err(storage_err)?;
+            tx.open_table(*table)
+                .map_err(storage_err)?
+                .remove(stored.as_str())
+                .map_err(storage_err)?;
         }
         tx.commit().map_err(storage_err)
     }
@@ -343,22 +395,33 @@ impl Store {
         events: tokio::sync::broadcast::Sender<crate::event::Event>,
         store: Option<&StoreConfig>,
     ) -> Result<LocalShare> {
-        let bytes = self.get(SEEDS, &id.to_string())?.ok_or_else(|| Error::NotAvailable(format!("no saved share {id}")))?;
+        let bytes = self
+            .get(SEEDS, &id.to_string())?
+            .ok_or_else(|| Error::NotAvailable(format!("no saved share {id}")))?;
         let record: SeedRecord = postcard::from_bytes(&bytes).map_err(storage_err)?;
-        let unchanged = record.files.iter().all(|(path, size, mtime)| modified(path) == Some((*size, *mtime)));
+        let unchanged = record
+            .files
+            .iter()
+            .all(|(path, size, mtime)| modified(path) == Some((*size, *mtime)));
         let manifest = Manifest::decode_verified(&record.manifest, *id)?;
         let key = store.and_then(|s| s.key.as_ref());
         let mut files = Vec::with_capacity(record.files.len());
         for ((path, _, _), entry) in record.files.iter().zip(manifest.files()) {
-            let data = FileData::detect(path.clone(), key, entry.size())
-                .map_err(|source| Error::Io { path: path.clone(), source })?;
+            let data =
+                FileData::detect(path.clone(), key, entry.size()).map_err(|source| Error::Io {
+                    path: path.clone(),
+                    source,
+                })?;
             files.push(data);
         }
         let encrypted = files.iter().any(FileData::is_encrypted);
         if !unchanged && !encrypted {
             let share = LocalShare::from_disk(&record.root, record.secret, events, None)?;
             if share.id != *id {
-                return Err(Error::BadManifest(format!("{} changed since it was shared", record.root.display())));
+                return Err(Error::BadManifest(format!(
+                    "{} changed since it was shared",
+                    record.root.display()
+                )));
             }
             share.set_allowed(self.load_allowed(id));
             return Ok(share);
@@ -371,12 +434,21 @@ impl Store {
             .zip(record.outboards)
             .zip(manifest.files())
             .map(|((data, saved), entry)| {
-                let mut outboard: FileOutboard = crate::chunker::empty_outboard(entry.root_hash(), entry.size());
+                let mut outboard: FileOutboard =
+                    crate::chunker::empty_outboard(entry.root_hash(), entry.size());
                 outboard.data = saved;
                 LocalFile::new(data, outboard)
             })
             .collect();
-        let share = LocalShare::from_parts(manifest, record.manifest, files, record.secret, events, true, record.root);
+        let share = LocalShare::from_parts(
+            manifest,
+            record.manifest,
+            files,
+            record.secret,
+            events,
+            true,
+            record.root,
+        );
         if !unchanged {
             share.verify()?;
         }
@@ -387,10 +459,16 @@ impl Store {
     /// The saved location of a share, if we have it.
     pub fn seed_root(&self, id: &ShareId) -> Option<PathBuf> {
         let bytes = self.get(SEEDS, &id.to_string()).ok()??;
-        postcard::from_bytes::<SeedRecord>(&bytes).ok().map(|r| r.root)
+        postcard::from_bytes::<SeedRecord>(&bytes)
+            .ok()
+            .map(|r| r.root)
     }
 
-    pub fn remember_allowed(&self, id: &ShareId, peers: Option<&HashSet<EndpointId>>) -> Result<()> {
+    pub fn remember_allowed(
+        &self,
+        id: &ShareId,
+        peers: Option<&HashSet<EndpointId>>,
+    ) -> Result<()> {
         match peers {
             None => self.remove(&[ACCESS], &id.to_string()),
             Some(peers) => {
@@ -404,7 +482,11 @@ impl Store {
     pub fn load_allowed(&self, id: &ShareId) -> Option<HashSet<EndpointId>> {
         let bytes = self.get(ACCESS, &id.to_string()).ok()??;
         let raw: Vec<[u8; 32]> = postcard::from_bytes(&bytes).ok()?;
-        Some(raw.iter().filter_map(|b| EndpointId::from_bytes(b).ok()).collect())
+        Some(
+            raw.iter()
+                .filter_map(|b| EndpointId::from_bytes(b).ok())
+                .collect(),
+        )
     }
 
     pub fn forget(&self, id: &ShareId) -> Result<()> {
@@ -420,7 +502,10 @@ impl Store {
     // ---- downloads ----
 
     pub fn remember_download(&self, code: &ShareCode, dest_dir: &Path) -> Result<()> {
-        let record = DownloadRecord { code: code.to_string(), dest_dir: dest_dir.to_path_buf() };
+        let record = DownloadRecord {
+            code: code.to_string(),
+            dest_dir: dest_dir.to_path_buf(),
+        };
         let bytes = postcard::to_allocvec(&record).map_err(storage_err)?;
         self.put(DOWNLOADS, &download_key(&code.id, dest_dir), &bytes)
     }
@@ -444,15 +529,29 @@ impl Store {
     pub fn saved(&self) -> Result<Vec<SavedTransfer>> {
         let mut out = Vec::new();
         for (key, bytes) in self.entries(SEEDS)? {
-            let (Ok(id), Ok(record)) = (key.parse::<ShareId>(), postcard::from_bytes::<SeedRecord>(&bytes)) else {
+            let (Ok(id), Ok(record)) = (
+                key.parse::<ShareId>(),
+                postcard::from_bytes::<SeedRecord>(&bytes),
+            ) else {
                 continue;
             };
-            out.push(SavedTransfer::Seed { id, path: record.root, private: record.secret.is_some() });
+            out.push(SavedTransfer::Seed {
+                id,
+                path: record.root,
+                private: record.secret.is_some(),
+            });
         }
         for (_, bytes) in self.entries(DOWNLOADS)? {
-            let Ok(record) = postcard::from_bytes::<DownloadRecord>(&bytes) else { continue };
-            let Ok(code) = record.code.parse() else { continue };
-            out.push(SavedTransfer::Download { code, dest_dir: record.dest_dir });
+            let Ok(record) = postcard::from_bytes::<DownloadRecord>(&bytes) else {
+                continue;
+            };
+            let Ok(code) = record.code.parse() else {
+                continue;
+            };
+            out.push(SavedTransfer::Download {
+                code,
+                dest_dir: record.dest_dir,
+            });
         }
         Ok(out)
     }

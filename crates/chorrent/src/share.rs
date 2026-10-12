@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::manifest::ShareId;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use iroh::{EndpointAddr, EndpointId};
 use iroh_gossip::proto::TopicId;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,9 @@ impl ShareCode {
     /// second seeder's code), so a download can start from all of them.
     pub fn merge(&mut self, other: &ShareCode) -> Result<(), Error> {
         if other.id != self.id || other.secret != self.secret {
-            return Err(Error::InvalidShareCode("those share codes are for different shares".into()));
+            return Err(Error::InvalidShareCode(
+                "those share codes are for different shares".into(),
+            ));
         }
         for peer in &other.peers {
             if !self.peers.iter().any(|p| p.id == peer.id) {
@@ -82,7 +84,9 @@ impl FromStr for ShareCode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let body = s.trim().strip_prefix(SHARE_CODE_PREFIX).ok_or_else(|| {
-            Error::InvalidShareCode("not a chorrent v2 share code (should start with \"chr2\")".into())
+            Error::InvalidShareCode(
+                "not a chorrent v2 share code (should start with \"chr2\")".into(),
+            )
         })?;
         let bytes = URL_SAFE_NO_PAD
             .decode(body)
@@ -97,7 +101,10 @@ impl FromStr for ShareCode {
 pub(crate) fn topic_for(id: ShareId, secret: Option<&[u8; 32]>) -> TopicId {
     let bytes = match secret {
         None => blake3::keyed_hash(&blake3::derive_key("chorrent v2 public topic", &[]), &id.0),
-        Some(secret) => blake3::keyed_hash(&blake3::derive_key("chorrent v2 private topic", secret), &id.0),
+        Some(secret) => blake3::keyed_hash(
+            &blake3::derive_key("chorrent v2 private topic", secret),
+            &id.0,
+        ),
     };
     TopicId::from_bytes(*bytes.as_bytes())
 }
@@ -106,7 +113,11 @@ pub(crate) fn topic_for(id: ShareId, secret: Option<&[u8; 32]>) -> TopicId {
 /// to the requester's endpoint id (authenticated by QUIC), so a token
 /// overheard on the wire is useless to anyone else.
 pub(crate) fn access_token(secret: &[u8; 32], requester: &EndpointId) -> [u8; 32] {
-    *blake3::keyed_hash(&blake3::derive_key("chorrent v2 access", secret), requester.as_bytes()).as_bytes()
+    *blake3::keyed_hash(
+        &blake3::derive_key("chorrent v2 access", secret),
+        requester.as_bytes(),
+    )
+    .as_bytes()
 }
 
 pub(crate) fn new_secret() -> [u8; 32] {
@@ -127,7 +138,13 @@ mod tests {
 
     #[test]
     fn share_code_round_trips_and_rejects_v1() {
-        let code = ShareCode { id: ShareId([7; 32]), name: "x".into(), total_size: 5, peers: vec![], secret: Some([1; 32]) };
+        let code = ShareCode {
+            id: ShareId([7; 32]),
+            name: "x".into(),
+            total_size: 5,
+            peers: vec![],
+            secret: Some([1; 32]),
+        };
         let text = code.to_string();
         assert!(text.starts_with("chr2"));
         assert_eq!(text.parse::<ShareCode>().unwrap(), code);

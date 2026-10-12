@@ -1,24 +1,24 @@
 use crate::discovery::{self, Swarm};
 use crate::download::{self, DownloadCtx, DownloadOutcome};
 use crate::error::{Error, Result};
-use crate::event::{Event, EVENT_CAPACITY};
+use crate::event::{EVENT_CAPACITY, Event};
 use crate::handler::{ChorrentProtocol, Registry};
 use crate::limits::RateLimiter;
 use crate::local::{LocalShare, SharedShare, StoreConfig};
 use crate::manifest::{Manifest, ShareId};
 use crate::node::ChorrentNode;
 use crate::registration::Registration;
-use crate::share::{new_secret, ShareCode};
+use crate::share::{ShareCode, new_secret};
 use crate::storage::MasterKey;
 use crate::store::{SavedTransfer, Store};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use tokio::sync::{broadcast, watch, Semaphore};
+use tokio::sync::{Semaphore, broadcast, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
 /// Settings for a [`Client`]. Start from [`Client::builder`].
@@ -194,10 +194,15 @@ impl ClientBuilder {
                     Some(store) => store.node_key()?,
                     None => SecretKey::generate(),
                 };
-                ChorrentNode::bind(handler, key, self.gossip.unwrap_or(true), self.mainline_dht).await?
+                ChorrentNode::bind(handler, key, self.gossip.unwrap_or(true), self.mainline_dht)
+                    .await?
             }
         };
-        let relay_wait = self.relay_wait.unwrap_or(if embedded { Duration::ZERO } else { Duration::from_secs(10) });
+        let relay_wait = self.relay_wait.unwrap_or(if embedded {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(10)
+        });
         if !relay_wait.is_zero() {
             // If it doesn't connect in time we carry on: share codes pick up
             // the relay when it does, and network_status() says so meanwhile.
@@ -394,7 +399,11 @@ impl Client {
 
     /// Like [`Client::seed`], with options such as making the share private.
     /// With an encrypted store, the content is copied into the store first.
-    pub async fn seed_with(&self, path: impl AsRef<Path>, options: SeedOptions) -> Result<SeedHandle> {
+    pub async fn seed_with(
+        &self,
+        path: impl AsRef<Path>,
+        options: SeedOptions,
+    ) -> Result<SeedHandle> {
         let path = absolute(path.as_ref())?;
         let secret = self.secret_for(&options);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -402,9 +411,11 @@ impl Client {
         // Hashing reads everything, so keep it off the async worker threads.
         let share = {
             let (events, store_cfg) = (events.clone(), self.store_cfg.clone());
-            tokio::task::spawn_blocking(move || LocalShare::from_disk(&path, secret, events, store_cfg.as_ref()))
-                .await
-                .map_err(|e| Error::Task(e.to_string()))??
+            tokio::task::spawn_blocking(move || {
+                LocalShare::from_disk(&path, secret, events, store_cfg.as_ref())
+            })
+            .await
+            .map_err(|e| Error::Task(e.to_string()))??
         };
         self.finish_seed(share, options, events).await
     }
@@ -419,14 +430,19 @@ impl Client {
         reader: impl std::io::Read + Send + 'static,
         options: SeedOptions,
     ) -> Result<SeedHandle> {
-        let store_cfg = self.store_cfg.clone().ok_or_else(|| Error::Storage("seed_reader needs a data_dir".into()))?;
+        let store_cfg = self
+            .store_cfg
+            .clone()
+            .ok_or_else(|| Error::Storage("seed_reader needs a data_dir".into()))?;
         let secret = self.secret_for(&options);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         let share = {
             let (events, name) = (events.clone(), name.to_string());
-            tokio::task::spawn_blocking(move || LocalShare::from_reader(&name, size, reader, secret, events, &store_cfg))
-                .await
-                .map_err(|e| Error::Task(e.to_string()))??
+            tokio::task::spawn_blocking(move || {
+                LocalShare::from_reader(&name, size, reader, secret, events, &store_cfg)
+            })
+            .await
+            .map_err(|e| Error::Task(e.to_string()))??
         };
         self.finish_seed(share, options, events).await
     }
@@ -438,11 +454,18 @@ impl Client {
         }
     }
 
-    async fn finish_seed(&self, share: LocalShare, options: SeedOptions, events: broadcast::Sender<Event>) -> Result<SeedHandle> {
+    async fn finish_seed(
+        &self,
+        share: LocalShare,
+        options: SeedOptions,
+        events: broadcast::Sender<Event>,
+    ) -> Result<SeedHandle> {
         if let Some(join) = &options.join
             && join.id != share.id
         {
-            return Err(Error::InvalidShareCode("the --join share code is for different content".into()));
+            return Err(Error::InvalidShareCode(
+                "the --join share code is for different content".into(),
+            ));
         }
         share.set_allowed(options.allow_peers.clone());
         if let Some(store) = &self.store {
@@ -505,18 +528,39 @@ impl Client {
     /// Start downloading a share into `dest_dir` (default: the current
     /// directory; must be `None` with an encrypted store). The share's file
     /// or folder is created inside it.
-    pub async fn download(&self, share: &ShareCode, dest_dir: Option<PathBuf>) -> Result<DownloadHandle> {
-        self.download_with(share, DownloadOptions { dest_dir, ..Default::default() }).await
+    pub async fn download(
+        &self,
+        share: &ShareCode,
+        dest_dir: Option<PathBuf>,
+    ) -> Result<DownloadHandle> {
+        self.download_with(
+            share,
+            DownloadOptions {
+                dest_dir,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Like [`Client::download`], with options such as an allowlist for reseeding.
-    pub async fn download_with(&self, share: &ShareCode, options: DownloadOptions) -> Result<DownloadHandle> {
+    pub async fn download_with(
+        &self,
+        share: &ShareCode,
+        options: DownloadOptions,
+    ) -> Result<DownloadHandle> {
         let key = self.store_cfg.as_ref().and_then(|s| s.key.clone());
         let dest_dir = match (&key, options.dest_dir) {
             (Some(_), Some(_)) => {
-                return Err(Error::Storage("with encrypted storage, downloads go into the store; pass no dest_dir".into()));
+                return Err(Error::Storage(
+                    "with encrypted storage, downloads go into the store; pass no dest_dir".into(),
+                ));
             }
-            (Some(_), None) => self.store_cfg.as_ref().expect("key implies a store").download_dir(&share.id),
+            (Some(_), None) => self
+                .store_cfg
+                .as_ref()
+                .expect("key implies a store")
+                .download_dir(&share.id),
             (None, dest) => absolute(&dest.unwrap_or_else(|| PathBuf::from(".")))?,
         };
 
@@ -532,7 +576,13 @@ impl Client {
             allow: options.allow_peers,
         };
         let (cancel, cancelled) = watch::channel(false);
-        let task = tokio::spawn(download::run(ctx, share.clone(), dest_dir, events.clone(), cancelled));
+        let task = tokio::spawn(download::run(
+            ctx,
+            share.clone(),
+            dest_dir,
+            events.clone(),
+            cancelled,
+        ));
         Ok(DownloadHandle {
             code: share.clone(),
             node: Arc::clone(&self.node),
@@ -559,7 +609,9 @@ impl Client {
             SavedTransfer::Seed { id, .. } => {
                 let (events, _) = broadcast::channel(EVENT_CAPACITY);
                 let share = self.load_saved(*id, events.clone()).await?;
-                Ok(Transfer::Seed(self.start_seed(share, Vec::new(), events).await?))
+                Ok(Transfer::Seed(
+                    self.start_seed(share, Vec::new(), events).await?,
+                ))
             }
             SavedTransfer::Download { code, dest_dir } => {
                 let encrypted = self.store_cfg.as_ref().is_some_and(|s| s.key.is_some());
@@ -572,8 +624,15 @@ impl Client {
         }
     }
 
-    async fn load_saved(&self, id: ShareId, events: broadcast::Sender<Event>) -> Result<LocalShare> {
-        let store = self.store.clone().ok_or_else(|| Error::Storage("no data_dir configured".into()))?;
+    async fn load_saved(
+        &self,
+        id: ShareId,
+        events: broadcast::Sender<Event>,
+    ) -> Result<LocalShare> {
+        let store = self
+            .store
+            .clone()
+            .ok_or_else(|| Error::Storage("no data_dir configured".into()))?;
         let store_cfg = self.store_cfg.clone();
         tokio::task::spawn_blocking(move || store.load_seed(&id, events, store_cfg.as_ref()))
             .await
@@ -597,7 +656,13 @@ impl Client {
     /// Read `len` bytes at `offset` of file number `file` (in
     /// [`Manifest::files`] order) of a share we hold completely, decrypting
     /// if needed. Nothing is written to disk.
-    pub async fn read_range(&self, id: &ShareId, file: usize, offset: u64, len: usize) -> Result<Vec<u8>> {
+    pub async fn read_range(
+        &self,
+        id: &ShareId,
+        file: usize,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>> {
         let share = self.find(id).await?;
         tokio::task::spawn_blocking(move || share.read_range(file, offset, len))
             .await
@@ -606,7 +671,12 @@ impl Client {
 
     /// Write file number `file` of a share we hold completely to `dest` as an
     /// ordinary (plaintext) file. `dest` must not exist yet.
-    pub async fn export_file(&self, id: &ShareId, file: usize, dest: impl Into<PathBuf>) -> Result<()> {
+    pub async fn export_file(
+        &self,
+        id: &ShareId,
+        file: usize,
+        dest: impl Into<PathBuf>,
+    ) -> Result<()> {
         let share = self.find(id).await?;
         let dest = dest.into();
         tokio::task::spawn_blocking(move || share.export_file(file, &dest))
@@ -627,7 +697,9 @@ impl Client {
     /// this client's store (files you seeded from elsewhere are never deleted).
     pub async fn remove(&self, id: &ShareId) -> Result<()> {
         let served = self.registry.write().unwrap().remove(id);
-        let root = served.map(|s| s.root.clone()).or_else(|| self.store.as_ref().and_then(|s| s.seed_root(id)));
+        let root = served
+            .map(|s| s.root.clone())
+            .or_else(|| self.store.as_ref().and_then(|s| s.seed_root(id)));
         self.forget(id)?;
         // The share's own folder in the store (its root may be a file inside it).
         let in_store = root.zip(self.store_cfg.as_ref()).and_then(|(root, cfg)| {
@@ -652,7 +724,10 @@ impl Client {
 }
 
 fn absolute(path: &Path) -> Result<PathBuf> {
-    std::path::absolute(path).map_err(|source| Error::Io { path: path.to_path_buf(), source })
+    std::path::absolute(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// A share being seeded. Seeding stops when this is stopped or dropped.
@@ -690,7 +765,10 @@ impl SeedHandle {
 
     /// Change who may download (`None`: anyone with the share code), e.g.
     /// when a group's membership changes. Saved with the share.
-    pub fn set_allowed_peers(&self, peers: Option<impl IntoIterator<Item = EndpointId>>) -> Result<()> {
+    pub fn set_allowed_peers(
+        &self,
+        peers: Option<impl IntoIterator<Item = EndpointId>>,
+    ) -> Result<()> {
         let peers: Option<HashSet<EndpointId>> = peers.map(|p| p.into_iter().collect());
         if let Some(store) = &self.store {
             store.remember_allowed(&self.code.id, peers.as_ref())?;
@@ -784,7 +862,11 @@ impl DownloadHandle {
             // findable for read_range/export_file.
             store.remember_seed(share)?;
         }
-        Ok(Finished { id: self.code.id, path: (!encrypted).then_some(outcome.path), seed })
+        Ok(Finished {
+            id: self.code.id,
+            path: (!encrypted).then_some(outcome.path),
+            seed,
+        })
     }
 }
 
