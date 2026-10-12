@@ -95,7 +95,7 @@ The full example is in the
 
 ## Requirements
 
-Rust 1.88 or newer, a tokio runtime, and iroh 1.0.3 or newer (if you bring your own endpoint).
+Rust 1.91 or newer, a tokio runtime, and iroh 1.0.3 or newer (if you bring your own endpoint).
 
 ## License
 

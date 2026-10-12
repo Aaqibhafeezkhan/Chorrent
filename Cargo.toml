@@ -3,12 +3,12 @@ resolver = "3"
 members = ["crates/chorrent", "crates/chorrent-cli"]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/mrsarthi/Chorrent"
-# let-chains (`if let ... && ...`) are stable since 1.88.
-rust-version = "1.88"
+# The oldest Rust that builds us: iroh and its dependencies need 1.91.
+rust-version = "1.91"
 
 [workspace.dependencies]
 chorrent = { path = "crates/chorrent" }

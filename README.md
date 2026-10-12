@@ -1,4 +1,8 @@
-# Chorrent (vers. 0.5.2)
+# Chorrent
+
+[![CI](https://github.com/mrsarthi/Chorrent/actions/workflows/ci.yml/badge.svg)](https://github.com/mrsarthi/Chorrent/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/chorrent.svg)](https://crates.io/crates/chorrent)
+[![docs.rs](https://docs.rs/chorrent/badge.svg)](https://docs.rs/chorrent)
 
 Chorrent sends files and folders straight from one computer to another. There's no upload
 to a website or cloud in between, and no size limit. You share a file, Chorrent gives you a
@@ -8,6 +12,11 @@ they use it to download the file directly from you.
 If several people have the same file, a downloader pulls different parts from all of them
 at once, and everyone who downloads helps pass the file on. So it gets faster as more people
 have it, and keeps working after the original sender goes offline.
+
+**How is this different?** Tools like sendme and magic-wormhole send from one person to one
+person. Chorrent is a swarm: every downloader also uploads, pieces come from all sharers at
+once (rarest first, with an endgame mode so one slow peer can't hold up the finish), and a
+share keeps working after the first sender leaves.
 
 Chorrent is two things:
 - a **command-line program** (`chorrent`), which this guide is mostly about, and
