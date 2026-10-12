@@ -393,14 +393,25 @@ impl LocalShare {
                     source,
                 })?;
             drop(outboard);
+            // An unwritten encrypted piece reads as zeros, which pass the hash
+            // check when the real content is zeros too (common in videos and
+            // disk images): it must also really have been written.
+            let written = file.data.written_pieces().map_err(|source| Error::Io {
+                path: file.data.path().to_path_buf(),
+                source,
+            })?;
             let size = self.manifest.files()[index].size();
-            for piece in self.layout.pieces_of(index) {
+            let pieces = self.layout.pieces_of(index);
+            for piece in pieces.clone() {
                 let loc = self.layout.locate(piece);
                 let end = loc.end.min(size);
-                if ranges
+                let verified = ranges
                     .iter()
-                    .any(|r| r.start <= loc.start && r.end.min(size) >= end)
-                {
+                    .any(|r| r.start <= loc.start && r.end.min(size) >= end);
+                let on_disk = written
+                    .as_ref()
+                    .is_none_or(|w| w.get(piece - pieces.start).copied().unwrap_or(false));
+                if verified && on_disk {
                     self.mark_have(piece);
                 }
             }
@@ -500,3 +511,60 @@ impl LocalShare {
 }
 
 pub(crate) type SharedShare = Arc<LocalShare>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::MasterKey;
+
+    /// Unwritten encrypted pieces read back as zeros. For content that *is*
+    /// zeros, a piece whose hash is already known (the sibling of the last
+    /// piece stored: it comes with that piece's proof) used to pass the
+    /// resume check without ever having been written, and the finished
+    /// download then failed with "encrypted piece N was never written".
+    #[test]
+    fn resume_only_counts_encrypted_pieces_that_were_written() {
+        let src = tempfile::tempdir().unwrap();
+        let file = src.path().join("blank.img");
+        std::fs::write(&file, vec![0u8; 8 * crate::chunker::BLOCK_SIZE.bytes()]).unwrap();
+        let (events, _) = broadcast::channel(16);
+        let seeder = LocalShare::from_disk(&file, None, events.clone(), None).unwrap();
+
+        let key = MasterKey::new([5; 32]);
+        let dest = tempfile::tempdir().unwrap();
+        let receive = || {
+            LocalShare::for_download(
+                seeder.manifest.clone(),
+                seeder.manifest_bytes.clone(),
+                dest.path(),
+                Some(&key),
+                None,
+                events.clone(),
+            )
+            .unwrap()
+        };
+
+        // Pieces 0..=4 arrive; then the sender dies. Piece 5's hash is known
+        // (it's piece 4's sibling) but piece 5 was never written.
+        let first = receive();
+        for piece in 0..=4 {
+            assert!(
+                first
+                    .store_piece(piece, &seeder.encode_piece(piece).unwrap())
+                    .unwrap()
+            );
+        }
+        let saved = first.outboard_snapshots();
+        first.release_writers();
+        drop(first);
+
+        let resumed = receive();
+        resumed.restore_progress(saved).unwrap();
+        let have: Vec<usize> = (0..8).filter(|&p| resumed.has(p)).collect();
+        assert_eq!(
+            have,
+            vec![0, 1, 2, 3, 4],
+            "only the pieces really written count"
+        );
+    }
+}

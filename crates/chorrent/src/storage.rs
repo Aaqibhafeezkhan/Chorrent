@@ -187,6 +187,23 @@ impl FileData {
         }
     }
 
+    /// For an encrypted file: which pieces were actually written and decrypt
+    /// with our key. `None` for a plain file, where whatever is on disk is
+    /// the data (a hash check alone decides).
+    pub fn written_pieces(&self) -> io::Result<Option<Vec<bool>>> {
+        let FileData::Encrypted { size, .. } = self else {
+            return Ok(None);
+        };
+        let Handle::Encrypted(enc) = self.open(false)? else {
+            unreachable!("an encrypted file opens as encrypted")
+        };
+        Ok(Some(
+            (0..size.div_ceil(block()))
+                .map(|i| enc.block_written(i))
+                .collect(),
+        ))
+    }
+
     /// Read every byte in order (for verifying or exporting); strict.
     /// Buffered in whole pieces: each small read would otherwise cost a disk
     /// read, and for encrypted files a whole piece's decryption.
@@ -215,6 +232,37 @@ pub(crate) struct Encrypted {
 impl Encrypted {
     fn block_len(&self, index: u64) -> usize {
         (self.size - index * block()).min(block()) as usize
+    }
+
+    /// Whether piece `index` was actually written and decrypts with our key.
+    /// Reading an unwritten piece gives zeros (outside strict mode), which
+    /// would pass a hash check if the real content is zeros too, so code
+    /// deciding what's on disk must ask this as well.
+    fn block_written(&self, index: u64) -> bool {
+        let len = self.block_len(index);
+        let mut sealed = vec![0u8; NONCE + len + TAG];
+        if self
+            .file
+            .read_exact_at(HEADER + index * slot(), &mut sealed)
+            .is_err()
+        {
+            return false;
+        }
+        let (nonce, ciphertext) = sealed.split_at(NONCE);
+        if nonce.iter().all(|&b| b == 0) {
+            return false;
+        }
+        let nonce = XNonce::try_from(nonce).expect("24 bytes");
+        let aad = index.to_le_bytes();
+        self.cipher
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: &aad,
+                },
+            )
+            .is_ok()
     }
 
     /// The plaintext of one piece. If it's absent or not authentic: zeros,

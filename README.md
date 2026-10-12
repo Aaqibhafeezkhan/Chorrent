@@ -42,16 +42,29 @@ Chorrent is two things:
 
 ## Install
 
-**If you have Rust installed**, build and install it from this folder:
+**Easiest: download it.** Get the file for your computer from the
+[Releases page](https://github.com/mrsarthi/Chorrent/releases/latest):
+
+| Your computer | File to download |
+|---|---|
+| Windows | `chorrent-…-x86_64-pc-windows-msvc.zip` |
+| Mac with Apple Silicon (M1 or newer) | `chorrent-…-aarch64-apple-darwin.tar.gz` |
+| Mac with Intel | `chorrent-…-x86_64-apple-darwin.tar.gz` |
+| Linux | `chorrent-…-x86_64-unknown-linux-gnu.tar.gz` |
+
+Unzip it, open a terminal in that folder, and run it:
+- On **Windows**, in Command Prompt type `chorrent ...`; in PowerShell `.\chorrent ...`; in Git Bash `./chorrent ...`
+- On **Mac or Linux**, type `./chorrent ...`
+
+On a Mac, the first run may be blocked because the program isn't signed by Apple. To allow
+it, run `xattr -d com.apple.quarantine chorrent` in that folder once.
+
+**If you have Rust installed** (1.91 or newer), you can build it yourself instead, from this
+folder:
 ```bash
 cargo install --path crates/chorrent-cli
 ```
 After that, `chorrent` works from any folder in any terminal.
-
-**If someone gave you `chorrent.exe`**, put it in a folder and open a terminal there:
-- In **Command Prompt**, type `chorrent ...`
-- In **PowerShell**, type `.\chorrent ...`
-- In **Git Bash**, type `./chorrent ...`
 
 Check it works:
 ```bash
