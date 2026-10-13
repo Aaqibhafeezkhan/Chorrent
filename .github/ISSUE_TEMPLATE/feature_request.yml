@@ -1,0 +1,42 @@
+name: Feature idea
+description: Suggest something new or a change.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please keep it short:** a few lines per box is plenty.
+        For a big change (especially to the wire protocol), let's agree on it here before anyone writes code.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would this help with?
+      description: One or two sentences about the problem, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: A short description of what you'd like to happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ai
+    attributes:
+      label: Did you use AI to write this idea up?
+      description: Fine either way, but please say so clearly.
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+
+  - type: input
+    id: ai-details
+    attributes:
+      label: If yes, what did the AI do?
+      description: A few words, e.g. "wrote the description".

@@ -59,11 +59,11 @@ Unzip it, open a terminal in that folder, and run it:
 On a Mac, the first run may be blocked because the program isn't signed by Apple. To allow
 it, run `xattr -d com.apple.quarantine chorrent` in that folder once.
 
-**If you have Rust installed** (1.91 or newer), you can build it yourself instead, from this
-folder:
+**If you have Rust installed** (1.91 or newer), you can install it with cargo instead:
 ```bash
-cargo install --path crates/chorrent-cli
+cargo install chorrent-cli
 ```
+or, from a copy of this repository, `cargo install --path crates/chorrent-cli`.
 After that, `chorrent` works from any folder in any terminal.
 
 Check it works:

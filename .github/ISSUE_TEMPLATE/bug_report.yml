@@ -1,0 +1,80 @@
+name: Bug report
+description: Something doesn't work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Please keep it short:** a few lines per box is plenty.
+        Exact commands and error messages help more than long explanations.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: One or two sentences.
+      placeholder: "`chorrent get` stops at 40% and prints \"Peer ... left\"."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: One sentence.
+      placeholder: The download finishes from the other seeder.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The exact commands you ran, in order.
+      render: shell
+      placeholder: |
+        chorrent seed movie.mp4
+        chorrent get chr2...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Chorrent version
+      description: Output of `chorrent --version` (or the crate version, if you use the library).
+      placeholder: chorrent 0.5.4
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 15 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `chorrent doctor` (if it's a connection problem)
+      description: Remove your IP addresses before pasting.
+      render: text
+
+  - type: dropdown
+    id: ai
+    attributes:
+      label: Did you use AI to write this report or find this bug?
+      description: Fine either way, but please say so clearly.
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+
+  - type: input
+    id: ai-details
+    attributes:
+      label: If yes, what did the AI do?
+      description: A few words, e.g. "wrote the description", "found the bug while reviewing code".

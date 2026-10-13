@@ -10,7 +10,10 @@ reports and pull requests are all welcome.
   are small and self-contained. Comment on one to claim it so two people don't
   do the same work.
 - Found a bug? Open an issue with what you ran, what you expected, and the
-  output of `chorrent doctor` (remove your IP addresses first).
+  output of `chorrent doctor` (remove your IP addresses first). The issue
+  form asks for each of these.
+- Keep issues and PR descriptions short: a few lines is plenty. Exact
+  commands and error messages help more than long explanations.
 - Bigger idea or a change to the wire protocol? Open an issue to talk it
   through before writing code.
 
@@ -59,8 +62,10 @@ CI runs both, plus the tests on Linux, Windows and macOS.
 - Add a test when you fix a bug, if one fits.
 - Changes to the wire protocol must keep working with peers on the current
   version, or bump the ALPN. Say which in the PR.
-- Using AI tools is fine. You should understand and be able to explain every
-  line you submit.
+- Using AI is fine, but say so clearly: in the issue form or the PR
+  template, tick that you used it and say what for (the fix, the tests, the
+  docs, the description...). You should understand and be able to explain
+  every line you submit.
 
 ## License
 

@@ -1,13 +1,14 @@
 [package]
 name = "chorrent-cli"
-description = "Command-line client for the chorrent p2p file transfer library"
+description = "Share files and folders directly between devices with a short code (the chorrent command)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-# Not published to crates.io; install with `cargo install --path crates/chorrent-cli`.
-publish = false
+readme = "../../README.md"
+keywords = ["p2p", "file-transfer", "file-sharing", "iroh", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "chorrent"
