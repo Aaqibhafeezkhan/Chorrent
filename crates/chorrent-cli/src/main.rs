@@ -311,6 +311,9 @@ async fn watch_seed(
             event = events.recv() => match event {
                 Ok(Event::Uploaded { bytes }) => { total += bytes; this_second += bytes; }
                 Ok(Event::SwarmPeers { connected }) if connected > 0 => say(&spinner, swarm_line(connected)),
+                Ok(Event::SharedFileChanged { path }) => say(&spinner, format!(
+                    "Warning: {path} changed while being shared, so it can't be sent any more.                      Run `chorrent seed` again to share the new version."
+                )),
                 Ok(_) | Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return,
             },

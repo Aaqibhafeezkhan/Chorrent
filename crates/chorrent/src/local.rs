@@ -19,6 +19,11 @@ use tokio::sync::broadcast;
 pub(crate) struct LocalFile {
     pub data: FileData,
     pub outboard: Mutex<FileOutboard>,
+    /// For a file shared from where it is: its size and modified time when
+    /// sharing started, to tell "the file changed" from other failures.
+    source_stamp: Option<(u64, u128)>,
+    /// Whether we've already reported this file changing.
+    reported_change: std::sync::atomic::AtomicBool,
     /// Kept open while pieces arrive: opening the file for every piece is
     /// slow (on Windows especially), and encrypted files must be opened for
     /// reading and writing.
@@ -30,9 +35,33 @@ impl LocalFile {
         Self {
             data,
             outboard: Mutex::new(outboard),
+            source_stamp: None,
+            reported_change: std::sync::atomic::AtomicBool::new(false),
             writer: Mutex::new(None),
         }
     }
+
+    /// A file shared from where it is: remembers its current size and
+    /// modified time, so a later change can be reported clearly.
+    pub fn shared_in_place(data: FileData, outboard: FileOutboard) -> Self {
+        let mut file = Self::new(data, outboard);
+        if let FileData::Plain(path) = &file.data {
+            file.source_stamp = file_stamp(path);
+        }
+        file
+    }
+}
+
+/// A file's size and modified time (nanoseconds since 1970).
+pub(crate) fn file_stamp(path: &Path) -> Option<(u64, u128)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((meta.len(), mtime))
 }
 
 /// Where new share data is kept when the client has a store.
@@ -103,19 +132,20 @@ impl LocalShare {
     /// hashed and served in place. Blocking: reads everything.
     pub fn from_disk(
         root: &Path,
+        label: Option<&str>,
         secret: Option<[u8; 32]>,
         events: broadcast::Sender<Event>,
         store: Option<&StoreConfig>,
     ) -> Result<Self> {
         let encrypted = store.and_then(|s| s.key.clone().map(|key| (s.new_share_dir(), key)));
         let (manifest, hashed) = match &encrypted {
-            None => Manifest::from_disk(root, |_, path, _| {
+            None => Manifest::from_disk(root, label, |_, path, _| {
                 Ok((
                     FileData::Plain(path.to_path_buf()),
                     chunker::hash_file(path)?,
                 ))
             })?,
-            Some((dir, key)) => Manifest::from_disk(root, |index, path, size| {
+            Some((dir, key)) => Manifest::from_disk(root, label, |index, path, size| {
                 let data = FileData::Encrypted {
                     path: dir.join(format!("{index}.enc")),
                     key: key.clone(),
@@ -177,9 +207,11 @@ impl LocalShare {
         root: PathBuf,
     ) -> Self {
         let manifest_bytes = manifest.encode();
+        // Plain files here are served from where they are (copies in the
+        // encrypted store can't change under us, so need no watching).
         let files = hashed
             .into_iter()
-            .map(|(data, outboard)| LocalFile::new(data, outboard))
+            .map(|(data, outboard)| LocalFile::shared_in_place(data, outboard))
             .collect();
         Self::from_parts(manifest, manifest_bytes, files, secret, events, true, root)
     }
@@ -312,6 +344,26 @@ impl LocalShare {
         match &self.secret {
             None => true,
             Some(secret) => token == Some(&crate::share::access_token(secret, requester)),
+        }
+    }
+
+    /// After serving `piece` failed: if it's from a file shared in place
+    /// that has changed since sharing started, say so (once per file).
+    /// Changed bytes are never served (every piece is checked against its
+    /// hash first); this just makes the reason visible.
+    pub fn note_serve_failure(&self, piece: usize) {
+        let file = &self.files[self.layout.locate(piece).file];
+        let Some(stamp) = file.source_stamp else {
+            return;
+        };
+        if file_stamp(file.data.path()) != Some(stamp)
+            && !file
+                .reported_change
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            let _ = self.events.send(Event::SharedFileChanged {
+                path: file.data.path().display().to_string(),
+            });
         }
     }
 
@@ -528,7 +580,7 @@ mod tests {
         let file = src.path().join("blank.img");
         std::fs::write(&file, vec![0u8; 8 * crate::chunker::BLOCK_SIZE.bytes()]).unwrap();
         let (events, _) = broadcast::channel(16);
-        let seeder = LocalShare::from_disk(&file, None, events.clone(), None).unwrap();
+        let seeder = LocalShare::from_disk(&file, None, None, events.clone(), None).unwrap();
 
         let key = MasterKey::new([5; 32]);
         let dest = tempfile::tempdir().unwrap();

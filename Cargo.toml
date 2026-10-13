@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/chorrent", "crates/chorrent-cli"]
 
 [workspace.package]
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/mrsarthi/Chorrent"
@@ -11,7 +11,8 @@ repository = "https://github.com/mrsarthi/Chorrent"
 rust-version = "1.91"
 
 [workspace.dependencies]
-chorrent = { path = "crates/chorrent" }
+# The version is what crates.io uses for chorrent-cli; keep it in step.
+chorrent = { path = "crates/chorrent", version = "0.5.5" }
 iroh = "1.0.3"
 tokio = "1"
 bao-tree = "0.16"

@@ -49,6 +49,10 @@ pub enum Event {
     PieceVerified { index: usize, bytes: u64 },
     /// A piece could not be fetched or failed verification; it will be retried.
     PieceFailed { index: usize, reason: String },
+    /// A file shared from where it is (not copied into a store) was changed,
+    /// moved or deleted while being shared, so its pieces can't be served
+    /// any more. Sent once per file. Share it again to share the new version.
+    SharedFileChanged { path: String },
     /// We served `bytes` (encoded, including proof data) to a peer.
     Uploaded { bytes: u64 },
     /// The download finished and every file matched its root hash.

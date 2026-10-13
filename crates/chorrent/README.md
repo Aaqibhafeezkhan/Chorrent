@@ -56,7 +56,7 @@ Whoever has it can download the share (add allowlists if that's not enough).
 | | |
 |---|---|
 | `Client::builder()` | Settings: a folder to remember things in (`data_dir`), speed limits, encrypted storage, an existing iroh endpoint, how long to wait for the relay at startup |
-| `client.seed(path)` / `seed_with(path, options)` | Share a file or folder. Options: `private`, `allow_peers`, `join` another sharer's swarm |
+| `client.seed(path)` / `seed_with(path, options)` | Share a file or folder. Options: `private`, `allow_peers`, `join` another sharer's swarm, a `name` downloaders see instead of the real one, and `in_place` (with encrypted storage: serve the file from where it is instead of copying it in) |
 | `client.seed_reader(name, size, reader, options)` | Share a stream instead of a path, e.g. an Android content URI |
 | `client.download(&code, dest)` / `download_with` | Download. Returns a handle with `events()`, `cancel()` and `finished()` |
 | `client.saved()` / `resume()` / `forget()` / `remove()` | Pick up shares and unfinished downloads after a restart |

@@ -439,10 +439,21 @@ async fn stop(app: App) -> (tempfile::TempDir, iroh::SecretKey) {
     } = app;
     accept_loop.abort();
     let _ = accept_loop.await;
-    Arc::into_inner(client)
-        .expect("nothing else holds the client")
-        .shutdown()
-        .await;
+    // Aborted connection tasks (each holding the client) are dropped a
+    // moment after the loop stops, so wait briefly for the last of them.
+    let mut client = client;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let client = loop {
+        match Arc::try_unwrap(client) {
+            Ok(client) => break client,
+            Err(still_shared) if std::time::Instant::now() < deadline => {
+                client = still_shared;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(_) => panic!("something still holds the client"),
+        }
+    };
+    client.shutdown().await;
     endpoint.close().await;
     (data, secret)
 }
@@ -634,4 +645,188 @@ async fn seeding_never_waits_for_an_unreachable_relay() {
 
     // Apps can still wait on purpose, and learn the answer.
     assert!(!client.wait_for_relay(Duration::from_millis(300)).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_label_and_in_place_sharing_with_encrypted_storage() {
+    let alice = app([1; 32]).await;
+    let src = tempfile::tempdir().unwrap();
+    let file = src.path().join("Holiday clip 2026.mp4");
+    let data = content(5 * PIECE_SIZE as usize + 123);
+    std::fs::write(&file, &data).unwrap();
+
+    let seed = alice
+        .client
+        .seed_with(&file, SeedOptions::default().name("a1b2c3").in_place(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        seed.share_code().name(),
+        "a1b2c3",
+        "downloaders see the label"
+    );
+    assert_eq!(
+        seed.path(),
+        std::path::absolute(&file).unwrap(),
+        "served from where it is"
+    );
+    let blobs = alice.data.path().join("blobs");
+    assert!(
+        !blobs.exists() || std::fs::read_dir(&blobs).unwrap().next().is_none(),
+        "no copy was made in the store"
+    );
+
+    let bob = app([2; 32]).await;
+    let done = bob
+        .client
+        .download(&seed.share_code(), None)
+        .await
+        .unwrap()
+        .finished()
+        .await
+        .unwrap();
+    assert_eq!(
+        bob.client.manifest(&done.id).await.unwrap().name(),
+        "a1b2c3"
+    );
+    assert_eq!(
+        bob.client
+            .read_range(&done.id, 0, 0, data.len())
+            .await
+            .unwrap(),
+        data
+    );
+
+    // Restart alice: the in-place share comes back from her sealed store,
+    // and the real file name appears nowhere in it.
+    let code = seed.share_code();
+    drop(seed);
+    let (alice_data, alice_secret) = stop(alice).await;
+    let needles = [("real file name", b"Holiday clip".to_vec())];
+    assert_eq!(
+        found_on_disk(alice_data.path(), &needles),
+        Vec::<String>::new()
+    );
+    let alice = app_as([1; 32], alice_data, None, alice_secret).await;
+    let saved = alice.client.saved().unwrap();
+    let chorrent::Transfer::Seed(_seed) = alice.client.resume(&saved[0]).await.unwrap() else {
+        panic!("expected the saved seed");
+    };
+    let carol = app([3; 32]).await;
+    let again = carol
+        .client
+        .download(&code, None)
+        .await
+        .unwrap()
+        .finished()
+        .await
+        .unwrap();
+    assert_eq!(
+        carol
+            .client
+            .read_range(&again.id, 0, 0, data.len())
+            .await
+            .unwrap(),
+        data
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_changed_while_shared_in_place_is_reported() {
+    let alice = app([1; 32]).await;
+    let src = tempfile::tempdir().unwrap();
+    let file = src.path().join("notes.txt");
+    std::fs::write(&file, content(3 * PIECE_SIZE as usize)).unwrap();
+    let seed = alice
+        .client
+        .seed_with(&file, SeedOptions::default().in_place(true))
+        .await
+        .unwrap();
+    let mut seed_events = seed.events();
+
+    // The user edits the file while it's shared (same size, new bytes).
+    std::fs::write(&file, vec![9u8; 3 * PIECE_SIZE as usize]).unwrap();
+
+    let bob = app([2; 32]).await;
+    let download = bob.client.download(&seed.share_code(), None).await.unwrap();
+    let reported = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(chorrent::Event::SharedFileChanged { path }) = seed_events.recv().await {
+                return path;
+            }
+        }
+    })
+    .await
+    .expect("the change is reported");
+    assert!(reported.ends_with("notes.txt"));
+    download.cancel();
+
+    // After a restart, the saved share refuses to come back.
+    drop(seed);
+    let (alice_data, alice_secret) = stop(alice).await;
+    let alice = app_as([1; 32], alice_data, None, alice_secret).await;
+    let saved = alice.client.saved().unwrap();
+    let resumed = alice.client.resume(&saved[0]).await;
+    assert!(
+        matches!(resumed, Err(Error::BadManifest(ref m)) if m.contains("changed since it was shared")),
+        "got {:?}",
+        resumed.err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn labels_must_be_valid_file_names() {
+    let alice = app([1; 32]).await;
+    let src = tempfile::tempdir().unwrap();
+    let file = src.path().join("a.txt");
+    std::fs::write(&file, b"hello").unwrap();
+    for bad in ["what?", "", "con", "a/b"] {
+        let result = alice
+            .client
+            .seed_with(&file, SeedOptions::default().name(bad))
+            .await;
+        assert!(
+            matches!(result, Err(Error::UnsupportedName { .. })),
+            "{bad:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_place_files_are_never_mistaken_for_encrypted_ones() {
+    // A user's own file that happens to start like an encrypted store file.
+    let alice = app([1; 32]).await;
+    let src = tempfile::tempdir().unwrap();
+    let file = src.path().join("odd.bin");
+    let mut data = b"CHRENC01".to_vec();
+    data.extend(content(2 * PIECE_SIZE as usize));
+    std::fs::write(&file, &data).unwrap();
+    let seed = alice
+        .client
+        .seed_with(&file, SeedOptions::default().in_place(true))
+        .await
+        .unwrap();
+    let code = seed.share_code();
+    drop(seed);
+
+    let (alice_data, alice_secret) = stop(alice).await;
+    let alice = app_as([1; 32], alice_data, None, alice_secret).await;
+    let saved = alice.client.saved().unwrap();
+    let chorrent::Transfer::Seed(_seed) = alice.client.resume(&saved[0]).await.unwrap() else {
+        panic!("expected the saved seed");
+    };
+    let bob = app([2; 32]).await;
+    // Mistaken for an encrypted file, nothing would be served: fail, don't hang.
+    let download = bob.client.download(&code, None).await.unwrap();
+    let done = tokio::time::timeout(Duration::from_secs(60), download.finished())
+        .await
+        .expect("the restarted in-place share is served")
+        .unwrap();
+    assert_eq!(
+        bob.client
+            .read_range(&done.id, 0, 0, data.len())
+            .await
+            .unwrap(),
+        data
+    );
 }

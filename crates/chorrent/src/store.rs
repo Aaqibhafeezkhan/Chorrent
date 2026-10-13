@@ -47,7 +47,12 @@ const PROGRESS: TableDefinition<&str, &[u8]> = TableDefinition::new("progress");
 /// share id hex → allowlisted peer ids (absent: no allowlist)
 const ACCESS: TableDefinition<&str, &[u8]> = TableDefinition::new("access");
 /// The tables holding records (everything but the format markers in META).
-const RECORD_TABLES: [TableDefinition<&str, &[u8]>; 4] = [SEEDS, DOWNLOADS, PROGRESS, ACCESS];
+/// share id hex → which of the share's files are in the encrypted store.
+/// Absent for records from before 0.5.5, which fall back to looking at the
+/// files themselves.
+const KINDS: TableDefinition<&str, &[u8]> = TableDefinition::new("kinds");
+const RECORD_TABLES: [TableDefinition<&str, &[u8]>; 5] =
+    [SEEDS, DOWNLOADS, PROGRESS, ACCESS, KINDS];
 
 /// META entries stored unsealed: they're needed before any key is checked,
 /// and neither reveals anything.
@@ -197,7 +202,7 @@ impl Store {
             e => storage_err(e),
         })?;
         let tx = db.begin_write().map_err(storage_err)?;
-        for table in [META, SEEDS, DOWNLOADS, PROGRESS, ACCESS] {
+        for table in [META, SEEDS, DOWNLOADS, PROGRESS, ACCESS, KINDS] {
             tx.open_table(table).map_err(storage_err)?;
         }
         tx.commit().map_err(storage_err)?;
@@ -383,6 +388,9 @@ impl Store {
             outboards: share.outboard_snapshots(),
         };
         let bytes = postcard::to_allocvec(&record).map_err(storage_err)?;
+        let kinds: Vec<bool> = share.files.iter().map(|f| f.data.is_encrypted()).collect();
+        let kinds = postcard::to_allocvec(&kinds).map_err(storage_err)?;
+        self.put(KINDS, &share.id.to_string(), &kinds)?;
         self.put(SEEDS, &share.id.to_string(), &bytes)
     }
 
@@ -405,18 +413,48 @@ impl Store {
             .all(|(path, size, mtime)| modified(path) == Some((*size, *mtime)));
         let manifest = Manifest::decode_verified(&record.manifest, *id)?;
         let key = store.and_then(|s| s.key.as_ref());
+        // Which files are encrypted copies: recorded since 0.5.5; older
+        // records fall back to looking at each file's header.
+        let kinds: Option<Vec<bool>> = self
+            .get(KINDS, &id.to_string())?
+            .and_then(|bytes| postcard::from_bytes(&bytes).ok())
+            .filter(|kinds: &Vec<bool>| kinds.len() == record.files.len());
         let mut files = Vec::with_capacity(record.files.len());
-        for ((path, _, _), entry) in record.files.iter().zip(manifest.files()) {
-            let data =
-                FileData::detect(path.clone(), key, entry.size()).map_err(|source| Error::Io {
-                    path: path.clone(),
-                    source,
-                })?;
+        for (i, ((path, _, _), entry)) in record.files.iter().zip(manifest.files()).enumerate() {
+            let data = match kinds.as_ref().map(|k| k[i]) {
+                Some(false) => FileData::Plain(path.clone()),
+                Some(true) => match key {
+                    Some(key) => FileData::Encrypted {
+                        path: path.clone(),
+                        key: key.clone(),
+                        size: entry.size(),
+                    },
+                    None => {
+                        return Err(Error::Storage(
+                            "this share is in the encrypted store, but no storage key was given"
+                                .into(),
+                        ));
+                    }
+                },
+                None => FileData::detect(path.clone(), key, entry.size()).map_err(|source| {
+                    Error::Io {
+                        path: path.clone(),
+                        source,
+                    }
+                })?,
+            };
             files.push(data);
         }
         let encrypted = files.iter().any(FileData::is_encrypted);
         if !unchanged && !encrypted {
-            let share = LocalShare::from_disk(&record.root, record.secret, events, None)?;
+            // Re-hash under the share's own name (it may be a label).
+            let share = LocalShare::from_disk(
+                &record.root,
+                Some(manifest.name()),
+                record.secret,
+                events,
+                None,
+            )?;
             if share.id != *id {
                 return Err(Error::BadManifest(format!(
                     "{} changed since it was shared",
@@ -437,7 +475,7 @@ impl Store {
                 let mut outboard: FileOutboard =
                     crate::chunker::empty_outboard(entry.root_hash(), entry.size());
                 outboard.data = saved;
-                LocalFile::new(data, outboard)
+                LocalFile::shared_in_place(data, outboard)
             })
             .collect();
         let share = LocalShare::from_parts(
@@ -490,7 +528,7 @@ impl Store {
     }
 
     pub fn forget(&self, id: &ShareId) -> Result<()> {
-        self.remove(&[SEEDS, ACCESS], &id.to_string())?;
+        self.remove(&[SEEDS, ACCESS, KINDS], &id.to_string())?;
         for (key, _) in self.entries(DOWNLOADS)? {
             if key.starts_with(&format!("{id}|")) {
                 self.remove(&[DOWNLOADS, PROGRESS], &key)?;

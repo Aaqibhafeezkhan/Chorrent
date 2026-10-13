@@ -121,7 +121,10 @@ impl ChorrentProtocol {
                 });
                 Response::Piece(bytes)
             }
-            _ => Response::DontHave,
+            _ => {
+                share.note_serve_failure(index);
+                Response::DontHave
+            }
         }
     }
 

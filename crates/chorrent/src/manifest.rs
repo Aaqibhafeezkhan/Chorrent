@@ -165,9 +165,22 @@ impl Manifest {
     /// the encrypted store while hashing.
     pub(crate) fn from_disk(
         root: &Path,
+        label: Option<&str>,
         mut ingest: impl FnMut(usize, &Path, u64) -> Result<(FileData, FileOutboard)>,
     ) -> Result<(Manifest, Vec<(FileData, FileOutboard)>)> {
-        let name = portable_name(root, root.file_name())?;
+        // The share's name: the file or folder's own name, or the label given.
+        let name = match label {
+            None => portable_name(root, root.file_name())?,
+            Some(label) => {
+                if let Some(reason) = name_problem(label) {
+                    return Err(Error::UnsupportedName {
+                        path: PathBuf::from(label),
+                        reason: reason.into(),
+                    });
+                }
+                label.to_string()
+            }
+        };
 
         let mut found = Vec::new();
         collect(root, vec![name.clone()], &mut found)?;
@@ -444,7 +457,7 @@ mod tests {
             };
             assert!(
                 matches!(
-                    Manifest::from_disk(&root, plain),
+                    Manifest::from_disk(&root, None, plain),
                     Err(Error::UnsupportedName { .. })
                 ),
                 "{bad}"

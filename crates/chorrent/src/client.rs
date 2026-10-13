@@ -245,6 +245,18 @@ pub struct SeedOptions {
     pub join: Option<ShareCode>,
     /// Only these peers may download, even if others get hold of the code.
     pub allow_peers: Option<HashSet<EndpointId>>,
+    /// The name downloaders see, instead of the file or folder's own name
+    /// (e.g. a short id, when the real name travels separately). Must be a
+    /// valid file name on every system. For a folder, only the top-level name
+    /// changes.
+    pub name: Option<String>,
+    /// With encrypted storage: serve the file from where it is instead of
+    /// copying it into the store first. Saves the copy's time and space;
+    /// only its bookkeeping goes into the (sealed) store. The file must stay
+    /// unchanged while it's shared: if it changes, its pieces stop being
+    /// served and the seed reports [`Event::SharedFileChanged`]. Without
+    /// encrypted storage, files are always served from where they are.
+    pub in_place: bool,
 }
 
 impl SeedOptions {
@@ -263,6 +275,18 @@ impl SeedOptions {
     /// See [`SeedOptions::allow_peers`].
     pub fn allow_peers(mut self, peers: impl IntoIterator<Item = EndpointId>) -> Self {
         self.allow_peers = Some(peers.into_iter().collect());
+        self
+    }
+
+    /// See [`SeedOptions::name`].
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// See [`SeedOptions::in_place`].
+    pub fn in_place(mut self, in_place: bool) -> Self {
+        self.in_place = in_place;
         self
     }
 }
@@ -398,7 +422,8 @@ impl Client {
     }
 
     /// Like [`Client::seed`], with options such as making the share private.
-    /// With an encrypted store, the content is copied into the store first.
+    /// With an encrypted store, the content is copied into the store first,
+    /// unless [`SeedOptions::in_place`] is set.
     pub async fn seed_with(
         &self,
         path: impl AsRef<Path>,
@@ -410,9 +435,11 @@ impl Client {
 
         // Hashing reads everything, so keep it off the async worker threads.
         let share = {
-            let (events, store_cfg) = (events.clone(), self.store_cfg.clone());
+            // In place: no store copy, so the file is hashed where it is.
+            let store_cfg = self.store_cfg.clone().filter(|_| !options.in_place);
+            let (events, label) = (events.clone(), options.name.clone());
             tokio::task::spawn_blocking(move || {
-                LocalShare::from_disk(&path, secret, events, store_cfg.as_ref())
+                LocalShare::from_disk(&path, label.as_deref(), secret, events, store_cfg.as_ref())
             })
             .await
             .map_err(|e| Error::Task(e.to_string()))??
@@ -421,8 +448,9 @@ impl Client {
     }
 
     /// Seed a single file given as a stream of exactly `size` bytes (for
-    /// example an Android content URI), named `name`. It's copied into the
-    /// client's store (encrypted if configured), so needs a data dir.
+    /// example an Android content URI), named `name` ([`SeedOptions::name`],
+    /// if set, wins). It's copied into the client's store (encrypted if
+    /// configured), so needs a data dir.
     pub async fn seed_reader(
         &self,
         name: &str,
@@ -437,7 +465,8 @@ impl Client {
         let secret = self.secret_for(&options);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         let share = {
-            let (events, name) = (events.clone(), name.to_string());
+            let name = options.name.clone().unwrap_or_else(|| name.to_string());
+            let events = events.clone();
             tokio::task::spawn_blocking(move || {
                 LocalShare::from_reader(&name, size, reader, secret, events, &store_cfg)
             })
