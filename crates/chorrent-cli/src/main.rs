@@ -3,7 +3,8 @@ use chorrent::{
     Client, DownloadHandle, Error, Event, SavedTransfer, SeedHandle, SeedOptions, ShareCode,
     Transfer,
 };
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -82,6 +83,12 @@ enum Command {
     Doctor {
         /// Share code(s) to test
         codes: Vec<String>,
+    },
+    /// Print shell completion scripts
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -167,6 +174,11 @@ async fn main() -> Result<()> {
             no_reseed,
         } => run_get(&cli.opts, args, seed, !no_reseed).await,
         Command::Doctor { codes } => run_doctor(&cli.opts, codes).await,
+        Command::Completions { shell } => {
+            let mut cmd = Cli::command();
+            generate(shell, &mut cmd, "chorrent", &mut std::io::stdout());
+            Ok(())
+        }
         Command::List => run_list(&cli.opts).await,
         Command::Resume => run_resume(&cli.opts).await,
         Command::Forget { share_id } => {

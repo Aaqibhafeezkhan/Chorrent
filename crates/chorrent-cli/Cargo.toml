@@ -19,4 +19,5 @@ chorrent = { workspace = true, features = ["mainline"] }
 tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
 clap.workspace = true
+clap_complete = "4.6"
 indicatif.workspace = true
