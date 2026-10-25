@@ -34,7 +34,7 @@ Chorrent is two things:
   - [doctor: check your connection](#doctor-check-your-connection)
   - [list, resume, forget: saved transfers](#list-resume-forget-saved-transfers)
   - [Options that work with every command](#options-that-work-with-every-command)
-- [Shell completions](#shell-completions)
+  - [Shell completions](#shell-completions)
 - [Common situations](#common-situations)
 - [Good to know](#good-to-know)
 - [For developers](#for-developers)
@@ -72,61 +72,6 @@ Check it works:
 chorrent --version
 ```
 Everyone sharing with each other should use the same version.
-
----
-
-## Shell completions
-
-Generate a completion script for your shell with `chorrent completions <shell>`. Supported
-shells are `bash`, `zsh`, `fish`, and `powershell`.
-
-**Bash**
-
-Generate a completion file and load it in the current session:
-
-```bash
-mkdir -p ~/.local/share/bash-completion/completions
-chorrent completions bash > ~/.local/share/bash-completion/completions/chorrent
-source ~/.local/share/bash-completion/completions/chorrent
-```
-
-On systems with bash-completion enabled, the file is loaded automatically in future sessions.
-
-**Zsh**
-
-Save the script in a directory on your `fpath`, then enable completion:
-
-```zsh
-mkdir -p ~/.zfunc
-chorrent completions zsh > ~/.zfunc/_chorrent
-```
-
-Add these lines to `~/.zshrc` (with `fpath` set before `compinit`):
-
-```zsh
-fpath=(~/.zfunc $fpath)
-autoload -Uz compinit && compinit
-```
-
-**Fish**
-
-Fish loads completion files from this directory automatically:
-
-```fish
-mkdir -p ~/.config/fish/completions
-chorrent completions fish > ~/.config/fish/completions/chorrent.fish
-```
-
-**PowerShell**
-
-Load completions in the current session:
-
-```powershell
-chorrent completions powershell | Out-String | Invoke-Expression
-```
-
-To enable them in future sessions, add that same command to your PowerShell profile
-(`$PROFILE`). Create the profile file first if it does not exist.
 
 ---
 
@@ -292,6 +237,61 @@ Put these before or after the command, e.g. `chorrent --upload-limit 1M seed mov
 
 By default, saved information lives in `%APPDATA%\chorrent` on Windows,
 `~/Library/Application Support/chorrent` on macOS, and `~/.local/share/chorrent` on Linux.
+
+## Shell completions
+
+Generate a completion script for your shell with `chorrent completions <shell>`. Supported
+shells are `bash`, `zsh`, `fish`, and `powershell`.
+
+**Bash**
+
+Generate a completion file and load it in the current session:
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+chorrent completions bash > ~/.local/share/bash-completion/completions/chorrent
+source ~/.local/share/bash-completion/completions/chorrent
+```
+
+On systems with bash-completion enabled, the file is loaded automatically in future sessions.
+
+**Zsh**
+
+Save the script in a directory on your `fpath`, then enable completion:
+
+```zsh
+mkdir -p ~/.zfunc
+chorrent completions zsh > ~/.zfunc/_chorrent
+```
+
+Add these lines to `~/.zshrc` (with `fpath` set before `compinit`):
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+**Fish**
+
+Fish loads completion files from this directory automatically:
+
+```fish
+mkdir -p ~/.config/fish/completions
+chorrent completions fish > ~/.config/fish/completions/chorrent.fish
+```
+
+**PowerShell**
+
+Load completions in the current session:
+
+```powershell
+chorrent completions powershell | Out-String | Invoke-Expression
+```
+
+To enable them in future sessions, add that same command to your PowerShell profile
+(`$PROFILE`). Create the profile file first if it does not exist.
+
+---
 
 ---
 
