@@ -4,7 +4,7 @@ use chorrent::{
     Transfer,
 };
 use clap::{Args, CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use std::time::Duration;
