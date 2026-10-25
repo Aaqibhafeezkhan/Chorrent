@@ -238,6 +238,8 @@ Put these before or after the command, e.g. `chorrent --upload-limit 1M seed mov
 By default, saved information lives in `%APPDATA%\chorrent` on Windows,
 `~/Library/Application Support/chorrent` on macOS, and `~/.local/share/chorrent` on Linux.
 
+---
+
 ## Shell completions
 
 Generate a completion script for your shell with `chorrent completions <shell>`. Supported
@@ -290,8 +292,6 @@ chorrent completions powershell | Out-String | Invoke-Expression
 
 To enable them in future sessions, add that same command to your PowerShell profile
 (`$PROFILE`). Create the profile file first if it does not exist.
-
----
 
 ---
 
